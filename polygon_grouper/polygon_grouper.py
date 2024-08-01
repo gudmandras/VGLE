@@ -265,10 +265,12 @@ class vgle:
             holders_with_holdings = self.get_holders_holdings(layer)
             layer, self.id_attribute, holders_with_holdings = self.create_id_field(layer, holders_with_holdings)
             holdings_with_area = self.get_holdings_areas(layer, field3)
-            self.holder_total_area = self.calculate_total_area(holders_with_holdings, holdings_with_area)
-            self.determine_seed_polygons(holders_with_holdings, holdings_with_area, field1, layer)
+            self.hol_w_hol = holders_with_holdings
+            self.hol_w_aea = holdings_with_area
+            self.holder_total_area = self.calculate_total_area()
+            self.determine_seed_polygons(field1, layer)
 
-            swaped_layer = self.swap_iteration(layer,holders_with_holdings,holdings_with_area)
+            swaped_layer = self.swap_iteration(layer)
 
             QgsProject.instance().addMapLayer(layer, False)
             root = QgsProject().instance().layerTreeRoot()
@@ -423,12 +425,12 @@ class vgle:
                 holders_with_holdings[holder] = [feature_id]
         return holders_with_holdings
 
-    def calculate_total_area(self, holders_with_holdings, holdings_with_area):
+    def calculate_total_area(self):
         holder_total_area = {}
-        for holder, holdings in holders_with_holdings.items():
+        for holder, holdings in self.hol_w_hol.items():
             total_area = 0
             for holding in holdings:
-                total_area += holdings_with_area[holding]
+                total_area += self.hol_w_aea[holding]
             holder_total_area[holder] = total_area
         return holder_total_area
 
@@ -441,7 +443,7 @@ class vgle:
             holdings_with_areas[holding_id] = area
         return holdings_with_areas
 
-    def determine_seed_polygons(self, holders_with_holdings, holdings_with_area, check, layer):
+    def determine_seed_polygons(self, check, layer):
         holders_with_seeds = {}
         if check == 2:
             selfeatures = layer.selectedFeatures()
@@ -452,41 +454,40 @@ class vgle:
                     holders_with_seeds[holder_value] = [id_value]
                 else:
                     holders_with_seeds[holder_value].append(id_value)
-        for holder, holdings in holders_with_holdings.items():
+        for holder, holdings in self.hol_w_hol.items():
             if holder not in list(holders_with_seeds.keys()):
                 largest_area = 0
                 largest_feature_id = ''
                 for holding in holdings:
-                    area_value = holdings_with_area[holding]
+                    area_value = self.hol_w_aea[holding]
                     if largest_area < area_value:
                         largest_area = area_value
                         largest_feature_id = holding
                 holders_with_seeds[holder] = [largest_feature_id]
         self.seeds = holders_with_seeds
 
-    def swap_iteration(self, layer, holders_with_holdings, holdings_with_areas):
+    def swap_iteration(self, layer):
+        self.counter = 0
         changes = 1
         turn = 0
-        self.global_changables = self.get_changable_holdings(holders_with_holdings)
+        self.global_changables = self.get_changable_holdings()
         local_total_areas = copy.deepcopy(self.holder_total_area)
         while changes != 0:
             turn += 1
-            if turn==1:
-                logging.debug(
-                    f"Turn {turn - 1}'s fraction number: {len(list(holdings_with_areas.keys())) / len(list(holders_with_holdings.keys()))}")
-                layer, changed, local_total_areas = self.swap(
-                    layer, holders_with_holdings, holdings_with_areas, local_total_areas, turn)
+            logging.debug(
+                f"Turn {turn - 1}'s fraction number: {len(list(self.hol_w_aea.keys())) / len(list(self.hol_w_hol.keys()))}")
+            layer, local_total_areas = self.swap(layer, local_total_areas, turn)
+            if turn == 1:
+                changes = copy.deepcopy(self.counter)
+                logging.debug(f'Changes in turn {turn}: {self.counter}')
             else:
-                layer, holders_with_holdings, holdings_with_areas = self.prepare_new_turn(layer)
-                logging.debug(
-                    f"Turn {turn - 1}'s fraction number: {len(list(holdings_with_areas.keys())) / len(list(holders_with_holdings.keys()))}")
-                layer, changed, local_total_areas = self.swap(
-                    layer, holders_with_holdings, holdings_with_areas, local_total_areas, turn)
+                changes = self.counter-changes
+                logging.debug(f'Changes in turn {turn}: {changes}')
         return layer
 
-    def get_changable_holdings(self, holders_with_holdings, in_distance=None):
+    def get_changable_holdings(self, in_distance=None):
         changable_holdings = []
-        for holder, holdings in holders_with_holdings.items():
+        for holder, holdings in self.hol_w_hol.items():
             for holding in holdings:
                 if holding not in self.seeds[holder]:
                     if in_distance:
@@ -496,29 +497,25 @@ class vgle:
                         changable_holdings.append(holding)
         return changable_holdings
 
-    def swap(self, layer, holders_with_holdings, holdings_with_areas, total_areas, turn=1):
-        self.counter = 0
+    def swap(self, layer, total_areas, turn=1):
         layer = self.set_turn_attributes(layer, turn)
 
-        for holder, holdings in holders_with_holdings.items():
+        for holder, holdings in self.hol_w_hol.items():
             seeds = self.seeds[holder]
             if len(seeds) == 1:
                 ngh_ids, neighbours = self.get_neighbours(layer, seeds)
                 in_distance = self.distance_search(layer, seeds)
-                distance_changes = self.get_changable_holdings(holders_with_holdings, in_distance)
+                distance_changes = self.get_changable_holdings(in_distance)
                 local_changables = [dist for dist in distance_changes if dist in self.global_changables]
-                layer, changables, total_areas = self.search_for_changes(layer, seeds[0], holders_with_holdings, holdings_with_areas, local_changables, ngh_ids, neighbours, total_areas)
-                logging.debug(f'Changes in turn {turn}: {self.counter}')
+                layer, changables, total_areas = self.search_for_changes(layer, seeds[0], local_changables, ngh_ids, neighbours, total_areas, holder, holdings)
             else:
                 for seed in seeds:
                     ngh_ids, neighbours = self.get_neighbours(layer, seed)
                     in_distance = self.distance_search(layer, seed)
-                    distance_changes = self.get_changable_holdings(holders_with_holdings, in_distance)
+                    distance_changes = self.get_changable_holdings(in_distance)
                     local_changables = [dist for dist in distance_changes if dist in self.global_changables]
-                    layer, changables, total_areas = self.search_for_changes(layer, seed, holders_with_holdings, holdings_with_areas, local_changables, ngh_ids, neighbours, total_areas)
-                logging.debug(f'Changes in turn {turn}: {self.counter}')
-
-        return layer, self.counter, total_areas
+                    layer, changables, total_areas = self.search_for_changes(layer, seed, local_changables, ngh_ids, neighbours, total_areas, holder, holdings)
+        return layer, total_areas
 
     def get_neighbours(self, layer, seeds):
         expression = ''
@@ -579,95 +576,83 @@ class vgle:
         except ValueError:
             return None
 
-    def search_for_changes(self, layer, seed, holders_with_holdings, holdings_with_areas, changables, ngh_ids, neighbours, total_areas):
-        #Get holder name
-        holder = [key for key, value in holders_with_holdings.items() if seed in value][0]
+    def search_for_changes(self, layer, seed, changables, ngh_ids, neighbours, total_areas, holder, holdings):
         #Get holder total area
         holder_total_area = total_areas[holder]
-        #Get holders holdings
-        holdings = [value[0] for key, value in holders_with_holdings.items() if key == holder]
         #Filter holdings
         holdings_ids = self.ids_for_change(holdings, changables)
         if holdings_ids:
             #Filter out nghs
-            holdings_ids = [h_id for h_id in holdings_ids if h_id not in neighbours]
-            print(neighbours)
+            filtered_holdings_ids = [h_id for h_id in holdings_ids if h_id not in ngh_ids]
             ngh_features = neighbours.getFeatures()
             for nghfeat in ngh_features:
-                print(1)
                 # Get ngh holder name
                 ngh_holder = int(nghfeat.attribute(self.nholder_attribute))
-                print(ngh_holder)
                 # Get holder total area
                 ngh_holder_total_area = total_areas[ngh_holder]
                 # Get holders holdings
-                ngh_holdings = [value[0] for key, value in holders_with_holdings.items() if key == ngh_holder]
+                ngh_holdings = self.hol_w_hol[ngh_holder]
                 # Filter holdings
                 ngh_holdings_ids = self.ids_for_change(ngh_holdings, changables)
-                print(ngh_holdings_ids)
                 if ngh_holdings_ids:
-                    print('Van mire cserélni')
                     # Filter out nghs
-                    ngh_holdings_ids = [h_id for h_id in ngh_holdings_ids if h_id not in ngh_ids]
+                    filtered_ngh_holdings_ids = [h_id for h_id in ngh_holdings_ids if h_id not in ngh_ids]
 
                     ngh_feat_id = nghfeat.attribute(self.id_attribute)
 
+                    filtered_ngh_holdings_ids.append(ngh_feat_id)
+
                     holder_combinations = []
-                    for L in range(len(holdings_ids) + 1):
-                        for subset in itertools.combinations(holdings_ids, L):
-                            if seed in subset:
+                    for L in range(len(filtered_holdings_ids) + 1):
+                        for subset in itertools.combinations(filtered_holdings_ids, L):
+                            if len(subset) > 1:
                                 holder_combinations.append(subset)
 
                     ngh_combinations = []
-                    for L in range(len(ngh_holdings_ids) + 1):
-                        for subset in itertools.combinations(ngh_holdings_ids, L):
+                    for L in range(len(filtered_ngh_holdings_ids) + 1):
+                        for subset in itertools.combinations(filtered_ngh_holdings_ids, L):
                             if ngh_feat_id in subset:
                                 ngh_combinations.append(subset)
 
                     holder_comb_totals = []
                     for comb in holder_combinations:
-                        combo = [area for key, area in holdings_with_areas if key in comb]
+                        combo = [area for key, area in self.hol_w_aea.items() if key in comb]
                         list_combo = list(combo)
                         temp_area = sum(list_combo)
                         holder_comb_totals.append(temp_area)
 
                     ngh_holder_comb_totals = []
-                    for comb in holder_combinations:
-                        combo = [area for key, area in holdings_with_areas if key in comb]
+                    for comb in ngh_combinations:
+                        combo = [area for key, area in self.hol_w_aea.items() if key in comb]
                         list_combo = list(combo)
                         temp_area = sum(list_combo)
                         ngh_holder_comb_totals.append(temp_area)
 
                     total_areas_difference = []
-                    holder_new_total_area = []
-                    ngh_new_total_area = []
+                    holder_new_total_areas = []
+                    ngh_new_total_areas = []
                     possible_holder_changes = []
                     possible_ngh_changes = []
-                    for turn, holder_comb in holder_comb_totals:
-                        for turnn, ngh_comb in ngh_holder_comb_totals:
+                    for holder_comb in holder_comb_totals:
+                        for ngh_comb in ngh_holder_comb_totals:
                             new_holder_total_area = holder_total_area - holder_comb + ngh_comb
                             if new_holder_total_area > holder_total_area - (
                                     holder_total_area * (self.tolerance / 100)) and new_holder_total_area < holder_total_area + (
                                     holder_total_area * (self.tolerance / 100)):
-                                print('First oké')
                                 new_ngh_total_area = ngh_holder_total_area - ngh_comb + holder_comb
                                 if new_ngh_total_area > ngh_holder_total_area - (
                                     ngh_holder_total_area * (self.tolerance / 100)) and new_ngh_total_area < ngh_holder_total_area + (
                                     ngh_holder_total_area * (self.tolerance / 100)):
-                                    print('Second oké')
                                     total_areas_difference.append(new_holder_total_area-holder_total_area)
-                                    holder_new_total_area.append(new_holder_total_area)
-                                    ngh_new_total_area.append(new_ngh_total_area)
+                                    holder_new_total_areas.append(new_holder_total_area)
+                                    ngh_new_total_areas.append(new_ngh_total_area)
                                     possible_holder_changes.append(holder_combinations[holder_comb_totals.index(holder_comb)])
                                     possible_ngh_changes.append(ngh_combinations[ngh_holder_comb_totals.index(ngh_comb)])
-                    print(possible_holder_changes)
                     if possible_holder_changes:
                         logging.debug(
                             f'Possible change(s) for {ngh_feat_id} as neighbour of {seed}: {possible_holder_changes}')
                         smallest = possible_holder_changes[total_areas_difference.index(min(total_areas_difference))]
                         ngh_cmbs = possible_ngh_changes[total_areas_difference.index(min(total_areas_difference))]
-                        print(smallest)
-                        print(ngh_cmbs)
                         if len(smallest) > 1 and len(ngh_cmbs) > 1:
                             #many to many change
                             for hold in smallest:
@@ -680,8 +665,8 @@ class vgle:
                                 changables.pop(changables.index(ngh))
                             self.global_changables.pop(self.global_changables.index(ngh_feat_id))
                             self.seeds[holder].append(ngh_feat_id)
-                            total_areas[holder] = new_holder_total_area[total_areas_difference.index(min(total_areas_difference))]
-                            total_areas[ngh_holder] = new_ngh_total_area[total_areas_difference.index(min(total_areas_difference))]
+                            total_areas[holder] = holder_new_total_areas[total_areas_difference.index(min(total_areas_difference))]
+                            total_areas[ngh_holder] = ngh_new_total_areas[total_areas_difference.index(min(total_areas_difference))]
                             self.counter += 1
                             logging.debug(
                                 f'Change {str(self.counter)} for {ngh_feat_id} (holder:{ngh_holder}) as neighbour of {seed} (holder:{holder}): {smallest} for {ngh_cmbs}')
@@ -705,8 +690,8 @@ class vgle:
                                 changables.pop(changables.index(smallest[0]))
                             self.global_changables.pop(self.global_changables.index(ngh_feat_id))
                             self.seeds[holder].append(ngh_feat_id)
-                            total_areas[holder] = new_holder_total_area[total_areas_difference.index(min(total_areas_difference))]
-                            total_areas[ngh_holder] = new_ngh_total_area[total_areas_difference.index(min(total_areas_difference))]
+                            total_areas[holder] = holder_new_total_areas[total_areas_difference.index(min(total_areas_difference))]
+                            total_areas[ngh_holder] = ngh_new_total_areas[total_areas_difference.index(min(total_areas_difference))]
                             self.counter += 1
                             logging.debug(
                                 f'Change {str(self.counter)} for {ngh_feat_id} (holder:{ngh_holder}) as neighbour of {seed} (holder:{holder}): {smallest} for {ngh_cmbs}')
@@ -720,8 +705,8 @@ class vgle:
                             changables.pop(changables.index(smallest[0]))
                             self.global_changables.pop(self.global_changables.index(ngh_feat_id))
                             self.seeds[holder].append(ngh_feat_id)
-                            total_areas[holder] = new_holder_total_area[total_areas_difference.index(min(total_areas_difference))]
-                            total_areas[ngh_holder] = new_ngh_total_area[total_areas_difference.index(min(total_areas_difference))]
+                            total_areas[holder] = holder_new_total_areas[total_areas_difference.index(min(total_areas_difference))]
+                            total_areas[ngh_holder] = ngh_new_total_areas[total_areas_difference.index(min(total_areas_difference))]
                             self.counter += 1
                             logging.debug(
                                 f'Change {str(self.counter)} for {ngh_feat_id} (holder:{ngh_holder}) as neighbour of {seed} (holder:{holder}): {smallest} for {ngh_cmbs}')
@@ -773,11 +758,6 @@ class vgle:
         self.nid_attribute = new_id
         self.nholder_attribute = new_holder
         return layer
-
-    def prepare_new_turn(self, layer):
-        holders_with_holdings = self.get_holders_holdings(layer)
-        holdings_with_area = self.get_holdings_areas(layer, self.weight)
-        return layer, holders_with_holdings, holdings_with_area
 
 """
 def one_to_one_swap(self, layer, holders_with_holdings, holdings_with_areas, seed_polygons, total_areas, changables,
