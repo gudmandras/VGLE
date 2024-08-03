@@ -202,10 +202,8 @@ class vgle:
         formatter = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
         logging.basicConfig(filename=path, level=logging.DEBUG, format=formatter, filemode='w')
 
-    def end_logging(self):  
-        log = logging.getLogger()  # root logger
-        for hdlr in log.handlers[:]:  # remove all old handlers
-            log.removeHandler(hdlr)
+    def end_logging(self): 
+        logging.shutdown() 
 
     def run(self):
         """Run method that performs all the real work"""
@@ -234,8 +232,6 @@ class vgle:
         # Run the dialog event loop
         result = self.dlg.exec_()
         # See if OK was pressed
-
-
 
         if result:
             #Set progress bar
@@ -837,5 +833,6 @@ class vgle:
         'OUTPUT':'TEMPORARY_OUTPUT'
         }
         simplied_layer = processing.run("native:multiparttosingleparts", alg_params)['OUTPUT']
+        simplied_layer.setName(f'{os.path.basename(layer.source())[:-4]}')
         final_layer =self.create_temp_layer(simplied_layer,directory,"merged")
         return final_layer
