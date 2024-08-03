@@ -1,0 +1,5 @@
+<RCC>
+    <qresource prefix="/plugins/polygon_grouper" >
+        <file>icon.png</file>
+    </qresource>
+</RCC>
