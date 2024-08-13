@@ -21,13 +21,13 @@
  *                                                                         *
  ***************************************************************************/
 """
-import sys
-
 from qgis.PyQt.QtCore import QSettings, QTranslator, QCoreApplication,  QVariant
 from qgis.PyQt.QtGui import QIcon
 from qgis.PyQt.QtWidgets import QAction
 from qgis.core import QgsProject, Qgis, QgsLayerTree, QgsLayerTreeLayer, QgsField, QgsVectorFileWriter, QgsVectorLayer, QgsExpression
 from qgis.utils import iface
+from qgis.core import QgsFieldProxyModel
+from PyQt5.QtCore import Qt
 
 # Initialize Qt resources from file resources.py
 from .resources import *
@@ -39,6 +39,7 @@ import itertools
 import logging
 from datetime import datetime
 import time, copy, uuid
+
 
 
 class vgle:
@@ -75,6 +76,9 @@ class vgle:
         # Check if plugin was started the first time in current QGIS session
         # Must be set in initGui() to survive plugin reloads
         self.first_start = None
+        self.dlg = vgleDialog()
+        self.dlg.button_box.accepted.disconnect()
+        self.dlg.button_box.accepted.connect(self.run)
 
     # noinspection PyMethodMayBeStatic
     def tr(self, message):
@@ -90,7 +94,6 @@ class vgle:
         """
         # noinspection PyTypeChecker,PyArgumentList,PyCallByClass
         return QCoreApplication.translate('vgle', message)
-
 
     def add_action(
         self,
@@ -193,6 +196,7 @@ class vgle:
         attributes = layer.fields()
         for attr in attributes:
             self.dlg.mComboBox_2.addItemWithCheckState(str(attr.name()), 0)
+        self.dlg.mComboBox_2.view().setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
 
     def set_progress_bar(self, value):
         self.dlg.progressBar.setValue(value)
@@ -203,7 +207,12 @@ class vgle:
         logging.basicConfig(filename=path, level=logging.DEBUG, format=formatter, filemode='w')
 
     def end_logging(self): 
-        logging.shutdown() 
+        logging.shutdown()
+
+    def fill_algorithms(self):
+        self.algorithms = ['Swap neighbours', 'Swap to get closer', "Swap neighbours, then swap to get closer", "Swap to get closer, then swap neighbours"]
+        for alg in self.algorithms:
+            self.dlg.comboBox.addItem(alg)
 
     def run(self):
         """Run method that performs all the real work"""
@@ -212,15 +221,17 @@ class vgle:
         # Only create GUI ONCE in callback, so that it will only load when the plugin is started
         if self.first_start == True:
             self.first_start = False
-            self.dlg = vgleDialog()
-
-        try:
-            self.dlg.mMapLayerComboBox.setLayer(list(QgsProject.instance().mapLayers().values())[0])
-            if self.dlg.mMapLayerComboBox.currentLayer():
-                self.fill_attributes(self.dlg.mMapLayerComboBox.currentLayer())
-                self.dlg.mFieldComboBox_2.setLayer(self.dlg.mMapLayerComboBox.currentLayer())
-        except IndexError:
-            pass
+            self.dlg.mFieldComboBox_2.setFilters(QgsFieldProxyModel.Numeric)
+            self.fill_algorithms()
+            try:
+                self.dlg.mMapLayerComboBox.setLayer(list(QgsProject.instance().mapLayers().values())[0])
+                if self.dlg.mMapLayerComboBox.currentLayer():
+                    self.fill_attributes(self.dlg.mMapLayerComboBox.currentLayer())
+                    self.dlg.mFieldComboBox_2.setLayer(self.dlg.mMapLayerComboBox.currentLayer())
+            except IndexError:
+                pass
+        else:
+            self.dlg.activateWindow()
 
         self.dlg.mMapLayerComboBox.layerChanged.connect(self.dlg.mFieldComboBox_2.setLayer)
         self.dlg.mMapLayerComboBox.layerChanged.connect(lambda:
@@ -229,13 +240,14 @@ class vgle:
         # show the dialog
         self.dlg.show()
 
+        # Set progress bar
+        self.dlg.progressBar.setRange(0, 100)
+
         # Run the dialog event loop
         result = self.dlg.exec_()
         # See if OK was pressed
 
         if result:
-            #Set progress bar
-            #self.dlg.progressBar.setRange(minimum, maximum)
             #Get inputs
             field0 = self.dlg.mMapLayerComboBox.currentText()
             field1 = self.dlg.checkBox.checkState()
@@ -252,11 +264,12 @@ class vgle:
                 self.use_single = True
             else:
                 self.use_single = False
+            field8 = self.algorithms.index(self.dlg.comboBox.currentText())
 
             input_layer = QgsProject().instance().mapLayersByName(field0)[0]
             if field1 == 2:
                 self.get_selected_features(input_layer)
-            self.start_logging(input_layer,field5)
+            self.start_logging(input_layer, field5)
 
             main_start_time = time.time()
             logging.debug(f'Start time: {datetime.now().strftime("%Y_%m_%d_%H_%M")}')
@@ -269,31 +282,61 @@ class vgle:
             logging.debug(f'Output dir: {str(field5)}')
 
             temp_layer = self.create_temp_layer(input_layer, field5, "swapped")
+            try:
+                layer, self.holder_attribute = self.set_holder_field(temp_layer, field2)
+                holders_with_holdings = self.get_holders_holdings(layer)
+                layer, self.id_attribute, holders_with_holdings = self.create_id_field(layer, holders_with_holdings)
+                holdings_with_area = self.get_holdings_areas(layer, field3)
+                self.hol_w_hol = holders_with_holdings
+                self.hol_w_aea = holdings_with_area
+                self.holder_total_area = self.calculate_total_area()
+                self.determine_seed_polygons(field1, layer)
 
-            layer, self.holder_attribute = self.set_holder_field(temp_layer, field2)
-            holders_with_holdings = self.get_holders_holdings(layer)
-            layer, self.id_attribute, holders_with_holdings = self.create_id_field(layer, holders_with_holdings)
-            holdings_with_area = self.get_holdings_areas(layer, field3)
-            self.hol_w_hol = holders_with_holdings
-            self.hol_w_aea = holdings_with_area
-            self.holder_total_area = self.calculate_total_area()
-            self.determine_seed_polygons(field1, layer)
+                if field8 < 2:
+                    self.set_progress_bar(20)
+                    if field8 == 0:
+                        swaped_layer = self.swap_iteration(layer)
+                    elif field8 == 1:
+                        swaped_layer = self.closer(layer)
+                else:
+                    self.set_progress_bar(10)
+                    if field8 == 2:
+                        swaped_layer = self.swap_iteration(layer)
+                        self.set_progress_bar(50)
+                        swaped_layer = self.closer(swaped_layer)
+                    elif field8 == 3:
+                        swaped_layer = self.closer(layer)
+                        self.set_progress_bar(50)
+                        swaped_layer = self.swap_iteration(swaped_layer)
+                if field8 < 2:
+                    self.set_progress_bar(80)
+                else:
+                    self.set_progress_bar(90)
 
-            swaped_layer = self.swap_iteration(layer)
+                QgsProject.instance().addMapLayer(swaped_layer, False)
+                root = QgsProject().instance().layerTreeRoot()
+                root.insertLayer(0, swaped_layer)
 
-            QgsProject.instance().addMapLayer(swaped_layer, False)
-            root = QgsProject().instance().layerTreeRoot()
-            root.insertLayer(0, swaped_layer)
+                merged_layer = self.create_merged_file(swaped_layer, field5)
+                self.set_progress_bar(100)
 
-            merged_layer = self.create_merged_file(swaped_layer,field5)
+                QgsProject.instance().addMapLayer(merged_layer, False)
+                root = QgsProject().instance().layerTreeRoot()
+                root.insertLayer(0, merged_layer)
 
-            QgsProject.instance().addMapLayer(merged_layer, False)
-            root = QgsProject().instance().layerTreeRoot()
-            root.insertLayer(0, merged_layer)
-
-            main_end_time = time.time()
-            logging.debug(f'Script time:{main_end_time-main_start_time}')
-            self.end_logging()
+                main_end_time = time.time()
+                logging.debug(f'Script time:{main_end_time-main_start_time}')
+                self.end_logging()
+                self.set_progress_bar(0)
+            except:
+                QgsProject.instance().removeMapLayer(temp_layer)
+                root = QgsProject().instance().layerTreeRoot()
+                root.removeLayer(0, swaped_layer)
+                if merged_layer:
+                    QgsProject.instance().removeMapLayer(merged_layer)
+                    root = QgsProject().instance().layerTreeRoot()
+                    root.removeLayer(0, merged_layer)
+                self.set_progress_bar(0)
 
     def get_selected_features(self, input_layer):
         alg_params = {
@@ -303,16 +346,28 @@ class vgle:
         self.selected_features = processing.run("native:saveselectedfeatures",alg_params)["OUTPUT"]
 
     def create_temp_layer(self, layer, directory, postfix):
-        path = os.path.join(directory,f"{str(layer.name())}_{postfix}.shp")
-        if os.path.isfile(path):
-            QgsVectorFileWriter.deleteShapeFile(path)
-        options = QgsVectorFileWriter.SaveVectorOptions()
-        options.driverName = "ESRI Shapefile"
-        options.fileEncoding = "UTF-8"
-        context = QgsProject.instance().transformContext()
-        QgsVectorFileWriter.writeAsVectorFormatV2(layer, path, context, options)
-        temp_layer = QgsVectorLayer(path, f"{postfix} layer", "ogr")
-        return temp_layer
+        if directory:
+            path = os.path.join(directory, f"{str(layer.name())}_{postfix}.shp")
+            if os.path.isfile(path):
+                QgsVectorFileWriter.deleteShapeFile(path)
+            options = QgsVectorFileWriter.SaveVectorOptions()
+            options.driverName = "ESRI Shapefile"
+            options.fileEncoding = "UTF-8"
+            context = QgsProject.instance().transformContext()
+            QgsVectorFileWriter.writeAsVectorFormatV2(layer, path, context, options)
+            temp_layer = QgsVectorLayer(path, f"{postfix} layer", "ogr")
+            return temp_layer
+        else:
+            epsg = layer.crs().geographicCrsAuthId()[-4:]
+            feats = [feature for feature in layer.getFeatures()]
+            mem_layer = QgsVectorLayer(f"Polygon?crs=epsg:{epsg}", f"{postfix} layer", "memory")
+            mem_layer_data = mem_layer.dataProvider()
+            attr = layer.dataProvider().fields().toList()
+            mem_layer_data.addAttributes(attr)
+            mem_layer.updateFields()
+            mem_layer_data.addFeatures(feats)
+            mem_layer.commitChanges()
+            return mem_layer
 
     def set_holder_field(self, layer, field1):
         if len(field1) == 1:
@@ -425,7 +480,6 @@ class vgle:
         for holder, holdings in holders.items():
             counter = 0
             for feature_id in holdings:
-        #        new_id = f'{str(holder)}/{counter}'
                 new_id = str(uuid.uuid4())
                 layer.changeAttributeValue(feature_id,attribute_id,new_id)
                 counter += 1
@@ -529,6 +583,11 @@ class vgle:
             else:
                 if changes == self.counter:
                     changer = False
+                    indexes = [index for index, name in enumerate(layer.fields()) if
+                               name == self.nid_attribute or
+                               name == self.nholder_attribute]
+                    layer.dataProvider.deleteAttributes(indexes)
+                    layer.updateFields()
                 else:
                     changes = copy.deepcopy(self.counter)
                 logging.debug(f'Changes in turn {turn}: {self.counter-changes}')
@@ -622,12 +681,12 @@ class vgle:
             return None
 
     def search_for_changes(self, layer, seed, changables, ngh_ids, neighbours, total_areas, holder, holdings):
-        #Get holder total area
-        holder_total_area = total_areas[holder]
         #Filter out nghs
         holdings_ids = [h_id for h_id in holdings if h_id not in ngh_ids]
         ngh_features = neighbours.getFeatures()
         for nghfeat in ngh_features:
+            # Get holder total area
+            holder_total_area = total_areas[holder]
             #Filter holdings
             filtered_holdings_ids = self.ids_for_change(holdings_ids, changables)
             if holdings_ids:
@@ -775,7 +834,9 @@ class vgle:
 
         return layer, changables, total_areas
 
-    def closer(self):
+    def closer(self, layer, seeds, changables, total_areas):
+        distance_matrix, attr_names = self.create_distance_matrix(layer)
+        
         pass
 
     def create_new_attribute(self, layer, turn, adj):
@@ -821,6 +882,34 @@ class vgle:
         self.nholder_attribute = new_holder
         return layer
 
+    def create_distance_matrix(self, layer):
+        alg_params = {
+        'INPUT':layer,
+        'ALL_PARTS': False,
+        'OUTPUT':'TEMPORARY_OUTPUT'
+        }
+        centroids = processing.run("native:centroids", alg_params)['OUTPUT']
+        alg_params = {
+        'INPUT':centroids,
+        'INPUT_FIELD': self.id_attribute,
+        'TARGET': centroids,
+        'TARGET_FIELD': self.id_attribute,
+        'MATRIX_TYPE': 1,
+        'NEAREST_POINTS': 0,
+        'OUTPUT':'TEMPORARY_OUTPUT'
+        }
+        matrix = processing.run("qgis:distancematrix", alg_params)['OUTPUT']
+        distance_matrix = {}
+        names = self.get_attributes_names(matrix)
+        for feature in matrix.getFeatures():
+            temp_list = []
+            for turn, field in names:
+                value = feature.attribute(field)
+                temp_list.append(value)
+            distance_matrix[feature.attribute('ID')] = temp_list
+
+        return distance_matrix, names
+
     def create_merged_file(self, layer, directory):
         alg_params =  {
         'INPUT':layer,
@@ -828,11 +917,68 @@ class vgle:
         'OUTPUT':'TEMPORARY_OUTPUT'
         }
         dissolved_layer = processing.run("native:dissolve",alg_params)['OUTPUT']
-        alg_params =  {
+        alg_params = {
         'INPUT':dissolved_layer,
         'OUTPUT':'TEMPORARY_OUTPUT'
         }
         simplied_layer = processing.run("native:multiparttosingleparts", alg_params)['OUTPUT']
         simplied_layer.setName(f'{os.path.basename(layer.source())[:-4]}')
-        final_layer =self.create_temp_layer(simplied_layer,directory,"merged")
+        final_layer = self.create_temp_layer(simplied_layer, directory, "merged")
         return final_layer
+
+"""
+    end_point = QgsGeometry.fromPointXY(geom[start_end])
+    buffer = end_point.buffer(20, 4) #Xm buffer with 4 segments
+    buffer_lyr=QgsVectorLayer("Polygon?crs=epsg:28355","buffer", "memory")
+    f = QgsFeature()
+    f.setGeometry(buffer)
+    buffer_lyr.dataProvider().addFeatures([f])
+    QgsProject.instance().addMapLayer(buffer_lyr)
+    
+         <property name="filters">
+      <set>QgsFieldProxyModel::Numeric</set>
+     </property>
+     
+     
+    buffer_lyr=QgsVectorLayer("Polygon?crs=epsg:20137","buffer", "memory")
+    feat = input_layer.getSelectedFeatures()
+    feat_one = [fe for fe in feat]
+    geom_buffer = feat_one[0].geometry().buffer(1000,-1)
+    f = QgsFeature()
+    f.setGeometry(geom_buffer)
+    buffer_lyr.dataProvider().addFeatures([f])
+    QgsProject.instance().addMapLayer(buffer_lyr)
+     
+    features = input_layer.getFeatures()
+    inputs = [f for f in features]
+    geoms = []
+    for feat in inputs:
+        if feat.geometry().intersects(geom_buffer):
+            f = QgsFeature()
+            geomet = feat.geometry()
+            f.setGeometry(geomet)
+            geoms.append(f)
+    for geo in geoms:
+        uffer_lyr.dataProvider().addFeatures([geo])
+    QgsProject.instance().addMapLayer(buffer_lyr)
+    
+buffer_lyr=QgsVectorLayer("Polygon?crs=epsg:20137","buffer", "memory")
+feat = input_layer.getSelectedFeatures()
+feat_one = [fe for fe in feat]
+geom_buffer = feat_one[0].geometry().buffer(1000,-1)
+f = QgsFeature()
+f.setGeometry(geom_buffer)
+buffer_lyr.dataProvider().addFeatures([f])
+features = input_layer.getFeatures()
+inputs = [f for f in features]
+geoms = []
+for feat in inputs:
+    if feat.geometry().intersects(geom_buffer):
+        f = QgsFeature()
+        geomet = feat.geometry()
+        f.setGeometry(geomet)
+        geoms.append(f)
+for geo in geoms:
+    buffer_lyr.dataProvider().addFeatures([geo])
+QgsProject.instance().addMapLayer(buffer_lyr)
+"""

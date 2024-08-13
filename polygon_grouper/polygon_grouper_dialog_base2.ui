@@ -7,13 +7,13 @@
     <x>0</x>
     <y>0</y>
     <width>668</width>
-    <height>600</height>
+    <height>602</height>
    </rect>
   </property>
   <property name="minimumSize">
    <size>
     <width>668</width>
-    <height>600</height>
+    <height>602</height>
    </size>
   </property>
   <property name="windowTitle">
@@ -25,8 +25,8 @@
   <widget class="QDialogButtonBox" name="button_box">
    <property name="geometry">
     <rect>
-     <x>410</x>
-     <y>550</y>
+     <x>400</x>
+     <y>560</y>
      <width>241</width>
      <height>31</height>
     </rect>
@@ -50,8 +50,8 @@
   <widget class="QProgressBar" name="progressBar">
    <property name="geometry">
     <rect>
-     <x>30</x>
-     <y>510</y>
+     <x>20</x>
+     <y>520</y>
      <width>521</width>
      <height>23</height>
     </rect>
@@ -72,13 +72,13 @@
      <x>440</x>
      <y>50</y>
      <width>211</width>
-     <height>431</height>
+     <height>461</height>
     </rect>
    </property>
    <property name="minimumSize">
     <size>
      <width>211</width>
-     <height>431</height>
+     <height>461</height>
     </size>
    </property>
    <property name="font">
@@ -101,13 +101,13 @@ p, li { white-space: pre-wrap; }
      <x>20</x>
      <y>30</y>
      <width>411</width>
-     <height>451</height>
+     <height>481</height>
     </rect>
    </property>
    <property name="minimumSize">
     <size>
      <width>411</width>
-     <height>451</height>
+     <height>481</height>
     </size>
    </property>
    <property name="currentIndex">
@@ -117,7 +117,7 @@ p, li { white-space: pre-wrap; }
     <property name="minimumSize">
      <size>
       <width>405</width>
-      <height>445</height>
+      <height>455</height>
      </size>
     </property>
     <property name="acceptDrops">
@@ -143,6 +143,9 @@ p, li { white-space: pre-wrap; }
      </property>
      <property name="currentText">
       <string/>
+     </property>
+     <property name="filters">
+      <set>QgsFieldProxyModel::Numeric</set>
      </property>
     </widget>
     <widget class="QLabel" name="label">
@@ -180,6 +183,12 @@ p, li { white-space: pre-wrap; }
        <height>27</height>
       </rect>
      </property>
+     <property name="minimumSize">
+      <size>
+       <width>131</width>
+       <height>27</height>
+      </size>
+     </property>
      <property name="suffix">
       <string>% tolerance</string>
      </property>
@@ -209,8 +218,8 @@ p, li { white-space: pre-wrap; }
     <widget class="QLabel" name="label_2">
      <property name="geometry">
       <rect>
-       <x>10</x>
-       <y>370</y>
+       <x>20</x>
+       <y>390</y>
        <width>121</width>
        <height>16</height>
       </rect>
@@ -218,7 +227,7 @@ p, li { white-space: pre-wrap; }
      <property name="minimumSize">
       <size>
        <width>121</width>
-       <height>13</height>
+       <height>16</height>
       </size>
      </property>
      <property name="font">
@@ -285,8 +294,8 @@ p, li { white-space: pre-wrap; }
     <widget class="QgsFileWidget" name="mQgsFileWidget">
      <property name="geometry">
       <rect>
-       <x>10</x>
-       <y>390</y>
+       <x>15</x>
+       <y>410</y>
        <width>381</width>
        <height>27</height>
       </rect>
@@ -345,26 +354,20 @@ p, li { white-space: pre-wrap; }
        <height>27</height>
       </size>
      </property>
-     <property name="insertPolicy">
-      <enum>QComboBox::InsertAlphabetically</enum>
-     </property>
-     <property name="sizeAdjustPolicy">
-      <enum>QComboBox::AdjustToMinimumContentsLengthWithIcon</enum>
-     </property>
     </widget>
     <widget class="QLabel" name="label_5">
      <property name="geometry">
       <rect>
        <x>10</x>
        <y>270</y>
-       <width>141</width>
-       <height>25</height>
+       <width>151</width>
+       <height>16</height>
       </rect>
      </property>
      <property name="minimumSize">
       <size>
-       <width>141</width>
-       <height>25</height>
+       <width>151</width>
+       <height>16</height>
       </size>
      </property>
      <property name="font">
@@ -386,6 +389,12 @@ p, li { white-space: pre-wrap; }
        <width>131</width>
        <height>27</height>
       </rect>
+     </property>
+     <property name="minimumSize">
+      <size>
+       <width>131</width>
+       <height>27</height>
+      </size>
      </property>
      <property name="suffix">
       <string> m</string>
@@ -412,6 +421,12 @@ p, li { white-space: pre-wrap; }
        <height>17</height>
       </rect>
      </property>
+     <property name="minimumSize">
+      <size>
+       <width>261</width>
+       <height>17</height>
+      </size>
+     </property>
      <property name="font">
       <font>
        <pointsize>10</pointsize>
@@ -424,8 +439,8 @@ p, li { white-space: pre-wrap; }
     <widget class="QLabel" name="label_6">
      <property name="geometry">
       <rect>
-       <x>10</x>
-       <y>327</y>
+       <x>15</x>
+       <y>337</y>
        <width>151</width>
        <height>16</height>
       </rect>
@@ -447,18 +462,18 @@ p, li { white-space: pre-wrap; }
       <string>Algorithm</string>
      </property>
     </widget>
-    <widget class="QComboBox" name="comboBox">
+    <widget class="QgsCheckableComboBox" name="mComboBox_3">
      <property name="geometry">
       <rect>
-       <x>150</x>
-       <y>320</y>
-       <width>241</width>
+       <x>190</x>
+       <y>330</y>
+       <width>200</width>
        <height>27</height>
       </rect>
      </property>
      <property name="minimumSize">
       <size>
-       <width>241</width>
+       <width>200</width>
        <height>27</height>
       </size>
      </property>
@@ -468,7 +483,7 @@ p, li { white-space: pre-wrap; }
     <property name="minimumSize">
      <size>
       <width>405</width>
-      <height>445</height>
+      <height>455</height>
      </size>
     </property>
     <attribute name="title">
@@ -508,8 +523,8 @@ p, li { white-space: pre-wrap; }
   <widget class="QPushButton" name="pushButton">
    <property name="geometry">
     <rect>
-     <x>576</x>
-     <y>510</y>
+     <x>560</x>
+     <y>520</y>
      <width>75</width>
      <height>23</height>
     </rect>
@@ -527,8 +542,8 @@ p, li { white-space: pre-wrap; }
   <widget class="QPushButton" name="pushButton_2">
    <property name="geometry">
     <rect>
-     <x>170</x>
-     <y>550</y>
+     <x>160</x>
+     <y>560</y>
      <width>131</width>
      <height>31</height>
     </rect>
@@ -546,8 +561,8 @@ p, li { white-space: pre-wrap; }
   <widget class="QgsCheckableComboBox" name="mComboBox">
    <property name="geometry">
     <rect>
-     <x>30</x>
-     <y>550</y>
+     <x>20</x>
+     <y>560</y>
      <width>121</width>
      <height>30</height>
     </rect>
