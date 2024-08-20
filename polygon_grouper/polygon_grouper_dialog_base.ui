@@ -282,7 +282,7 @@ p, li { white-space: pre-wrap; }
       <string>Give preference for the selected features</string>
      </property>
     </widget>
-    <widget class="QgsFileWidget" name="mQgsFileWidget" native="true">
+    <widget class="QgsFileWidget" name="mQgsFileWidget">
      <property name="geometry">
       <rect>
        <x>10</x>
@@ -296,6 +296,12 @@ p, li { white-space: pre-wrap; }
        <width>381</width>
        <height>27</height>
       </size>
+     </property>
+     <property name="storageMode">
+      <enum>QgsFileWidget::GetDirectory</enum>
+     </property>
+     <property name="options">
+      <set>QFileDialog::ShowDirsOnly</set>
      </property>
     </widget>
     <widget class="QLabel" name="label_4">
@@ -556,9 +562,9 @@ p, li { white-space: pre-wrap; }
     </size>
    </property>
    <property name="currentText">
-    <string/>
+    <string>Advanced</string>
    </property>
-   <property name="defaultText" stdset="0">
+   <property name="defaultText">
     <string>Advanced</string>
    </property>
   </widget>

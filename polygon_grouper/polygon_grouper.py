@@ -30,7 +30,6 @@ from qgis.core import QgsFieldProxyModel
 from PyQt5.QtCore import Qt
 import qgis.core
 
-
 # Initialize Qt resources from file resources.py
 from .resources import *
 # Import the code for the dialog
@@ -215,11 +214,11 @@ class vgle:
         self.algorithms = ['Neighbours', 'Closer', "Neighbours, then closer", "Closer, then neighbours"]
         for alg in self.algorithms:
             self.dlg.comboBox.addItem(alg)
-    
-    def close1():
+
+    def close1(self):
         raise RuntimeError
 
-    def close2():
+    def close2(self):
         self.dlg.close()
 
     def run(self):
@@ -253,7 +252,7 @@ class vgle:
         f = QgsProcessingFeedback()
         f.progressChanged.connect(self.set_progress_bar)
 
-        self.dlg.pushButton.clicked(self.close1)
+        self.dlg.pushButton.clicked.connect(self.close1)
         self.dlg.button_box.rejected.connect(self.close2)
 
         # Run the dialog event loop
@@ -375,14 +374,10 @@ class vgle:
 
     def create_temp_layer(self, layer, directory, postfix):
         if directory:
-            counter = 1
-            while True:
-                path = os.path.join(directory, f"{str(layer.name())}_{postfix}.shp")
-                if os.path.isfile(path):
-                    #QgsVectorFileWriter.deleteShapeFile(path)
-                    path = f'{path[:-4]}_{counter}.shp'
-                else:
-                    break
+            path = os.path.join(directory, f"{str(layer.name())}_{postfix}.shp")
+            while os.path.isfile(path):
+                timestamp = datetime.fromtimestamp(time.time()).strftime("%d_%m_%Y_%H_%M_%S")
+                path = os.path.join(directory, f"{str(layer.name())}_{postfix}_{timestamp}.shp")
             options = QgsVectorFileWriter.SaveVectorOptions()
             options.driverName = "ESRI Shapefile"
             options.fileEncoding = "UTF-8"
@@ -526,8 +521,8 @@ class vgle:
         features = layer.getFeatures()
         for feature in features:
             feature_id = feature.id()
-            if holder != qgis.core.NULL and feature != qgis.core.NULL:
-                holder = feature.attribute(self.holder_attribute)
+            holder = feature.attribute(self.holder_attribute)
+            if holder != qgis.core.NULL:
                 if holder in list(holders_with_holdings.keys()):
                     holders_with_holdings[holder].append(feature_id)
                 else:
@@ -613,10 +608,11 @@ class vgle:
             else:
                 if changes == self.counter:
                     changer = False
-                    indexes = [index for index, name in enumerate(layer.fields()) if
-                               name == self.nid_attribute or
-                               name == self.nholder_attribute]
-                    layer.dataProvider.deleteAttributes(indexes)
+                    layer.startEditing()
+                    indexes = []
+                    indexes.append(layer.fields().indexFromName(self.nid_attribute))
+                    indexes.append(layer.fields().indexFromName(self.nholder_attribute))
+                    layer.deleteAttributes(indexes)
                     layer.updateFields()
                 else:
                     changes = copy.deepcopy(self.counter)
@@ -689,7 +685,7 @@ class vgle:
             feats = [feat for feat in layer.getFeatures()]
             expression = f'"{self.id_attribute}" = \'{seed}\''
             layer.selectByExpression(expression)
-            sel_feat = layer.selectedFeatures()
+            sel_feat = layer.selectedFeatures()[0]
             geom_buffer = sel_feat.geometry().buffer(self.distance, -1)
             for feat in feats:
                 if feat.geometry().intersects(geom_buffer):
@@ -773,7 +769,7 @@ class vgle:
                                 new_holder_total_area = holder_total_area - holder_comb + ngh_comb
                                 if self.check_total_area_threshold(new_holder_total_area, holder):
                                     new_ngh_total_area = ngh_holder_total_area - ngh_comb + holder_comb
-                                    if self.check_total_area_threshold(ngh_new_total_areas, ngh_holder):
+                                    if self.check_total_area_threshold(new_ngh_total_area, ngh_holder):
                                         total_areas_difference.append(new_holder_total_area-holder_total_area)
                                         holder_new_total_areas.append(new_holder_total_area)
                                         ngh_new_total_areas.append(new_ngh_total_area)
@@ -874,196 +870,144 @@ class vgle:
             local_total_areas = total_areas
         while changer:
             turn += 1
-            logging.debug(
-                f"Turn {turn - 1}'s fraction number: {len(list(self.seeds.values())) / len(list(self.hol_w_hol.values()))}")
             layer = self.set_turn_attributes(layer, turn)
             for holder, holdings in self.hol_w_hol.items():
                 holder_total_area = local_total_areas[holder]
-                seeds = self.seeds[holder]
+                seed = self.seeds[holder][0]
                 for holding in holdings:
-                    if holding not in seeds:
+                    if holding != seeds:
                         temp_holder_combo = None
                         temp_ch_combo = None
                         temp_holder_total_area = None
                         temp_ch_total_area = None
-                        if len(seeds) == 0:
-                            closest_seeds = (self.distance_matrix[holding][seeds[0]] < self.distance)
-                            if closest_seeds:
-                                seed = seeds[0]
-                                in_distance = self.distance_search(layer, seed)
-                                distance_changes = self.get_changable_holdings(in_distance)
-                                filtered_holdings_ids = self.ids_for_change(holdings, distance_changes)
-                                holder_combinations = []
-                                for L in range(len(filtered_holdings_ids) + 1):
-                                    for subset in itertools.combinations(filtered_holdings_ids, L):
-                                        if len(subset) >= 1 and subset not in holder_combinations:
-                                            holder_combinations.append(subset)
-                                filtered_local_changables = [dist for dist in distance_changes if
-                                                             dist not in filtered_holdings_ids]
-                                for local_ch in filtered_local_changables:
-                                    change_holder = [holder for holder, holdings in self.hol_w_hol.items() if
-                                                     local_ch in holdings]
-                                    change_holder_seed = self.seeds[change_holder][0]
-                                    filtered_local_ch_holdings = [hold for hold in self.hol_w_hol[change_holder] if
-                                                                  hold in filtered_local_ch_holdings]
-                                    ch_combinations = []
-                                    for L in range(len(filtered_local_ch_holdings) + 1):
-                                        for subset in itertools.combinations(filtered_local_ch_holdings, L):
-                                            if local_ch in subset and subset not in ch_combinations:
-                                                ch_combinations.append(subset)
-                                    temp_distance = None
-                                    for turn, holder_comb in enumerate(holder_combinations):
-                                        for turnn, ch_comb in enumerate(ch_combinations):
-                                            holder_max_distance = self.max_distance(holder_comb, seed)
-                                            ch_max_distance = self.max_distance(ch_comb, change_holder_seed)
-                                            ch_closer = self.is_closer(holder_max_distance, ch_comb, seed)
-                                            holder_closer = self.is_closer(ch_max_distance, holder_comb, change_holder_seed)
-                                            if ch_closer and holder_closer:
-                                                new_holder_total_area = holder_total_area - self.calculate_combo_area(holder_comb) + self.calculate_combo_area(ch_comb)
-                                                if self.check_total_area_threshold(new_holder_total_area,holder):
-                                                    new_ch_total_area = local_total_areas[change_holder] - self.calculate_combo_area(ch_comb) + self.calculate_combo_area(holder_comb)
-                                                    if self.check_total_area_threshold(new_ch_total_area):
-                                                        if not temp_distance:
-                                                            temp_holder_combo = holder_comb
-                                                            temp_ch_combo = ch_comb
-                                                            temp_distance = ch_max_distance
-                                                            temp_holder_total_area = new_holder_total_area
-                                                            temp_ch_total_area = new_ch_total_area
-                                                        else:
-                                                            if temp_distance > ch_max_distance:
-                                                                temp_holder_combo = holder_comb
-                                                                temp_ch_combo = ch_comb
-                                                                temp_distance = ch_max_distance
-                                                                temp_holder_total_area = new_holder_total_area
-                                                                temp_ch_total_area = new_ch_total_area
-                        else:
-                            closest_seeds = [True for seed in seeds if self.distance_matrix[holding][seed] < self.distance]
-                            if True in closest_seeds:
-                                closest_seeds = True
-                            if closest_seeds:
-                                merged_seeds = self.create_merge_feature(layer, seeds)
-                                in_distance = self.distance_search(merged_seeds)
-                                distance_changes = self.get_changable_holdings(in_distance)
-                                filtered_holdings_ids = self.ids_for_change(holdings, distance_changes)
-                                holder_combinations = []
-                                for L in range(len(filtered_holdings_ids) + 1):
-                                    for subset in itertools.combinations(filtered_holdings_ids, L):
-                                        if len(subset) >= 1 and subset not in holder_combinations:
-                                            holder_combinations.append(subset)
-                                filtered_local_changables = [dist for dist in distance_changes if
-                                                             dist not in filtered_holdings_ids]
-                                for local_ch in filtered_local_changables:
-                                    change_holder = [holder for holder, holdings in self.hol_w_hol.items() if
-                                                     local_ch in holdings]
-                                    change_holder_seed = self.seeds[change_holder][0]
-                                    filtered_local_ch_holdings = [hold for hold in self.hol_w_hol[change_holder] if
-                                                                  hold in filtered_local_ch_holdings]
-                                    ch_combinations = []
-                                    for L in range(len(filtered_local_ch_holdings) + 1):
-                                        for subset in itertools.combinations(filtered_local_ch_holdings, L):
-                                            if local_ch in subset and subset not in ch_combinations:
-                                                ch_combinations.append(subset)
-                                    temp_holder_combo = None
-                                    temp_ch_combo = None
-                                    temp_distance = None
-                                    for turn, holder_comb in enumerate(holder_combinations):
-                                        for turnn, ch_comb in enumerate(ch_combinations):
-                                            holder_max_distance = self.max_distance(holder_comb, seed)
-                                            ch_max_distance = self.max_distance(ch_comb, change_holder_seed)
-                                            ch_closer = self.is_closer(holder_max_distance, ch_comb, seed)
-                                            holder_closer = self.is_closer(ch_max_distance, holder_comb, change_holder_seed)
-                                            if ch_closer and holder_closer:
-                                                new_holder_total_area = holder_total_area - self.calculate_combo_area(holder_comb) + self.calculate_combo_area(ch_comb)
-                                                if self.check_total_area_threshold(new_holder_total_area,holder):
-                                                    new_ch_total_area = local_total_areas[change_holder] - self.calculate_combo_area(ch_comb) + self.calculate_combo_area(holder_comb)
-                                                    if self.check_total_area_threshold(new_ch_total_area):
-                                                        if not temp_distance:
-                                                            temp_holder_combo = holder_comb
-                                                            temp_ch_combo = ch_comb
-                                                            temp_distance = ch_max_distance
-                                                        else:
-                                                            if temp_distance > ch_max_distance:
-                                                                temp_holder_combo = holder_comb
-                                                                temp_ch_combo = ch_comb
-                                                                temp_distance = ch_max_distance
-                        if len(temp_holder_combo) > 1 and len(temp_ch_combo) > 1:
-                            #many to many change
-                            for hold in temp_holder_combo:
-                                self.set_new_attribute(layer, hold, ','.join(temp_ch_combo), self.nid_attribute)
-                                self.set_new_attribute(layer, hold, change_holder, self.nholder_attribute)
-                                self.hol_w_hol[holder].pop(self.hol_w_hol[holder].index(hold))
-                                self.hol_w_hol[change_holder].append(hold)
-                            for ch in temp_ch_combo:
-                                self.set_new_attribute(layer, ch, ','.join(temp_ch_combo), self.nid_attribute)
-                                self.set_new_attribute(layer, ch, holder, self.nholder_attribute)
-                                self.hol_w_hol[change_holder].pop(self.hol_w_hol[change_holder].index(ch))
-                                self.hol_w_hol[holder].append(ch)
-                            local_total_areas[holder] = temp_holder_total_area
-                            local_total_areas[change_holder] = temp_ch_total_area
-                            self.counter += 1
-                            logging.debug(
-                                f'Change {str(self.counter)} for {temp_ch_combo} (holder:{change_holder}) to get closer to {seed} (holder:{holder}): {temp_holder_combo} for {temp_ch_combo}')
-                        elif len(temp_holder_combo) > 1 and len(temp_ch_combo) == 1 or len(temp_holder_combo) == 1 and len(temp_ch_combo) > 1:
-                            #many to one change
-                            if len(temp_holder_combo) > 1:
+                        in_distance = self.distance_search(layer, seed)
+                        distance_changes = self.get_changable_holdings(in_distance)
+                        filtered_holdings_ids = self.ids_for_change(holdings, distance_changes)
+
+                        holder_combinations = []
+                        for L in range(len(filtered_holdings_ids) + 1):
+                            for subset in itertools.combinations(filtered_holdings_ids, L):
+                                if len(subset) >= 1 and subset not in holder_combinations:
+                                    holder_combinations.append(subset)
+                        filtered_local_changables = [dist for dist in distance_changes if
+                                                        dist not in filtered_holdings_ids]
+
+                        for local_ch in filtered_local_changables:
+                            change_holder = [holder for holder, holdings in self.hol_w_hol.items() if
+                                                local_ch in holdings][0]
+                            change_holder_seed = self.seeds[change_holder][0]
+                        filtered_local_ch_holdings = [hold for hold in self.hol_w_hol[change_holder] if
+                                                            hold in filtered_local_changables]
+
+                        ch_combinations = []
+                        for L in range(len(filtered_local_ch_holdings) + 1):
+                            for subset in itertools.combinations(filtered_local_ch_holdings, L):
+                                if local_ch in subset and subset not in ch_combinations:
+                                    ch_combinations.append(subset)
+
+                        measure = None
+                        for turn, holder_comb in enumerate(holder_combinations):
+                            for turnn, ch_comb in enumerate(ch_combinations):
+                                holder_max_distance = self.max_distance(holder_comb, seed)
+                                ch_max_distance = self.max_distance(ch_comb, change_holder_seed)
+                                ch_closer = self.is_closer(holder_max_distance, ch_comb, seed)
+                                holder_closer = self.is_closer(ch_max_distance, holder_comb, change_holder_seed)
+                                if ch_closer and holder_closer:
+                                    new_holder_total_area = holder_total_area - self.calculate_combo_area(holder_comb) + self.calculate_combo_area(ch_comb)
+                                    if self.check_total_area_threshold(new_holder_total_area,holder):
+                                        new_ch_total_area = local_total_areas[change_holder] - self.calculate_combo_area(ch_comb) + self.calculate_combo_area(holder_comb)
+                                        if self.check_total_area_threshold(new_ch_total_area, change_holder):
+                                            local_measure = sum([self.calculate_composite_number(seed, temp_id) for temp_id in holder_comb])
+                                            if not measure:
+                                                temp_holder_combo = holder_comb
+                                                temp_ch_combo = ch_comb
+                                                measure = local_measure
+                                                temp_holder_total_area = new_holder_total_area
+                                                temp_ch_total_area = new_ch_total_area
+                                            else:
+                                                if measure < local_measure:
+                                                    temp_holder_combo = holder_comb
+                                                    temp_ch_combo = ch_comb
+                                                    measure = local_measure
+                                                    temp_holder_total_area = new_holder_total_area
+                                                    temp_ch_total_area = new_ch_total_area
+                        if measure:
+                            if len(temp_holder_combo) > 1 and len(temp_ch_combo) > 1:
+                                #many to many change
                                 for hold in temp_holder_combo:
-                                    self.set_new_attribute(layer, hold, temp_ch_combo[0], self.nid_attribute)
+                                    self.set_new_attribute(layer, hold, ','.join(temp_ch_combo), self.nid_attribute)
                                     self.set_new_attribute(layer, hold, change_holder, self.nholder_attribute)
-                                    changables.pop(changables.index(hold))
                                     self.hol_w_hol[holder].pop(self.hol_w_hol[holder].index(hold))
                                     self.hol_w_hol[change_holder].append(hold)
+                                for ch in temp_ch_combo:
+                                    self.set_new_attribute(layer, ch, ','.join(temp_ch_combo), self.nid_attribute)
+                                    self.set_new_attribute(layer, ch, holder, self.nholder_attribute)
+                                    self.hol_w_hol[change_holder].pop(self.hol_w_hol[change_holder].index(ch))
+                                    self.hol_w_hol[holder].append(ch)
+                                local_total_areas[holder] = temp_holder_total_area
+                                local_total_areas[change_holder] = temp_ch_total_area
+                                self.counter += 1
+                                logging.debug(
+                                    f'Change {str(self.counter)} for {temp_ch_combo} (holder:{change_holder}) to get closer to {seed} (holder:{holder}): {temp_holder_combo} for {temp_ch_combo}')
+                            elif len(temp_holder_combo) > 1 and len(temp_ch_combo) == 1 or len(temp_holder_combo) == 1 and len(temp_ch_combo) > 1:
+                                #many to one change
+                                if len(temp_holder_combo) > 1:
+                                    for hold in temp_holder_combo:
+                                        self.set_new_attribute(layer, hold, temp_ch_combo[0], self.nid_attribute)
+                                        self.set_new_attribute(layer, hold, change_holder, self.nholder_attribute)
+                                        self.hol_w_hol[holder].pop(self.hol_w_hol[holder].index(hold))
+                                        self.hol_w_hol[change_holder].append(hold)
+                                    self.hol_w_hol[change_holder].pop(self.hol_w_hol[change_holder].index(temp_ch_combo[0]))
+                                    self.hol_w_hol[holder].append(temp_ch_combo[0])
+                                    logging.debug(
+                                        f'Change {str(self.counter)} for {temp_ch_combo} (holder:{change_holder}) to get closer to {seed} (holder:{holder}): {temp_holder_combo} for {temp_ch_combo[0]}')
+                                else:
+                                    for ngh in temp_ch_combo:
+                                        self.set_new_attribute(layer, ngh, temp_holder_combo[0], self.nid_attribute)
+                                        self.set_new_attribute(layer, ngh, holder, self.nholder_attribute)
+                                        changables.pop(changables.index(ngh))
+                                        self.hol_w_hol[change_holder].pop(self.hol_w_hol[change_holder].index(ngh))
+                                        self.hol_w_hol[holder].append(ngh)
+                                    self.set_new_attribute(layer, temp_holder_combo[0], ','.join(temp_ch_combo), self.nid_attribute)
+                                    self.set_new_attribute(layer, temp_holder_combo[0], change_holder, self.nholder_attribute)
+                                    self.hol_w_hol[holder].pop(self.hol_w_hol[holder].index(temp_holder_combo[0]))
+                                    self.hol_w_hol[change_holder].append(temp_holder_combo[0])
+                                    logging.debug(
+                                        f'Change {str(self.counter)} for {temp_ch_combo} (holder:{change_holder}) to get closer to {seed} (holder:{holder}): {temp_holder_combo[0]} for {temp_ch_combo}')
+                                local_total_areas[holder] = temp_holder_total_area
+                                local_total_areas[change_holder] = temp_ch_total_area
+                                self.counter += 1
+                            else:
+                                #one to one change
+                                self.set_new_attribute(layer, temp_holder_combo[0], temp_ch_combo[0], self.nid_attribute)
+                                self.set_new_attribute(layer, temp_holder_combo[0], change_holder, self.nholder_attribute)
+                                self.set_new_attribute(layer, temp_ch_combo[0], temp_holder_combo[0], self.nid_attribute)
+                                self.set_new_attribute(layer, temp_ch_combo[0], holder, self.nholder_attribute)
                                 self.hol_w_hol[change_holder].pop(self.hol_w_hol[change_holder].index(temp_ch_combo[0]))
                                 self.hol_w_hol[holder].append(temp_ch_combo[0])
-                                logging.debug(
-                                    f'Change {str(self.counter)} for {temp_ch_combo} (holder:{change_holder}) to get closer to {seed} (holder:{holder}): {temp_holder_combo} for {temp_ch_combo[0]}')
-                            else:
-                                for ngh in temp_ch_combo:
-                                    self.set_new_attribute(layer, ngh, temp_holder_combo[0], self.nid_attribute)
-                                    self.set_new_attribute(layer, ngh, holder, self.nholder_attribute)
-                                    changables.pop(changables.index(ngh))
-                                    self.hol_w_hol[change_holder].pop(self.hol_w_hol[change_holder].index(ngh))
-                                    self.hol_w_hol[holder].append(ngh)
-                                self.set_new_attribute(layer, temp_holder_combo[0], ','.join(temp_ch_combo), self.nid_attribute)
-                                self.set_new_attribute(layer, temp_holder_combo[0], change_holder, self.nholder_attribute)
-                                changables.pop(changables.index(temp_holder_combo[0]))
                                 self.hol_w_hol[holder].pop(self.hol_w_hol[holder].index(temp_holder_combo[0]))
                                 self.hol_w_hol[change_holder].append(temp_holder_combo[0])
+                                local_total_areas[holder] = temp_holder_total_area
+                                local_total_areas[change_holder] = temp_ch_total_area
+                                self.counter += 1
                                 logging.debug(
-                                    f'Change {str(self.counter)} for {temp_ch_combo} (holder:{change_holder}) to get closer to {seed} (holder:{holder}): {temp_holder_combo[0]} for {temp_ch_combo}')
-                            local_total_areas[holder] = temp_holder_total_area
-                            local_total_areas[change_holder] = temp_ch_total_area
-                            self.counter += 1
-                        else:
-                            #one to one change
-                            self.set_new_attribute(layer, temp_holder_combo[0], temp_ch_combo[0], self.nid_attribute)
-                            self.set_new_attribute(layer, temp_holder_combo[0], change_holder, self.nholder_attribute)
-                            self.set_new_attribute(layer, temp_ch_combo[0], temp_holder_combo[0], self.nid_attribute)
-                            self.set_new_attribute(layer, temp_ch_combo[0], holder, self.nholder_attribute)
-                            changables.pop(changables.index(temp_ch_combo[0]))
-                            changables.pop(changables.index(temp_holder_combo[0]))
-                            self.hol_w_hol[change_holder].pop(self.hol_w_hol[change_holder].index(temp_ch_combo[0]))
-                            self.hol_w_hol[holder].append(temp_ch_combo[0])
-                            self.hol_w_hol[holder].pop(self.hol_w_hol[holder].index(temp_holder_combo[0]))
-                            self.hol_w_hol[change_holder].append(temp_holder_combo[0])
-                            local_total_areas[holder] = temp_holder_total_area
-                            local_total_areas[change_holder] = temp_ch_total_area
-                            self.counter += 1
-                            logging.debug(
-                                f'Change {str(self.counter)} for {temp_ch_combo[0]} (holder:{change_holder}) as neighbour of {seed} (holder:{holder}): {temp_holder_combo[0]} for {temp_ch_combo[0]}')
+                                    f'Change {str(self.counter)} for {temp_ch_combo[0]} (holder:{change_holder}) as neighbour of {seed} (holder:{holder}): {temp_holder_combo[0]} for {temp_ch_combo[0]}')
             if turn == 1:
                 changes = copy.deepcopy(self.counter)
                 logging.debug(f'Changes in turn {turn}: {self.counter}')
             else:
                 if changes == self.counter:
                     changer = False
-                    indexes = [index for index, name in enumerate(layer.fields()) if
-                               name == self.nid_attribute or
-                               name == self.nholder_attribute]
-                    layer.dataProvider.deleteAttributes(indexes)
+                    layer.startEditing()
+                    indexes = []
+                    indexes.append(layer.fields().indexFromName(self.nid_attribute))
+                    indexes.append(layer.fields().indexFromName(self.nholder_attribute))
+                    layer.deleteAttributes(indexes)
                     layer.updateFields()
                 else:
                     changes = copy.deepcopy(self.counter)
                 logging.debug(f'Changes in turn {turn}: {self.counter - changes}')
+        return layer
 
 
     def create_new_attribute(self, layer, turn, adj):
@@ -1171,7 +1115,6 @@ class vgle:
         temp_area = sum(list_combo)
         return temp_area
 
-
     def is_closer(self, threshold_distance, ids, seed):
         is_closer_bool = True
         for id in ids:
@@ -1188,10 +1131,16 @@ class vgle:
                 max_distance = distance
         return max_distance
 
+    def calculate_composite_number(self, seed, id):
+        area = self.hol_w_aea[id]
+        distance = self.distance_matrix[seed][id]
+        return area*distance
+
     def create_merged_file(self, layer, directory):
+        attribute_name = str(int(self.nholder_attribute[0])-1) + self.nholder_attribute[1:]
         alg_params =  {
         'INPUT':layer,
-        'FIELD':[self.nholder_attribute],
+        'FIELD':[attribute_name],
         'OUTPUT':'TEMPORARY_OUTPUT'
         }
         dissolved_layer = processing.run("native:dissolve",alg_params)['OUTPUT']
@@ -1201,6 +1150,7 @@ class vgle:
         }
         simplied_layer = processing.run("native:multiparttosingleparts", alg_params)['OUTPUT']
         simplied_layer.setName(f'{os.path.basename(layer.source())[:-4]}')
+        simplied_layer.commitChanges()
         final_layer = self.create_temp_layer(simplied_layer, directory, "merged")
         return final_layer
 
