@@ -44,7 +44,7 @@
     <enum>Qt::Horizontal</enum>
    </property>
    <property name="standardButtons">
-    <set>QDialogButtonBox::Cancel|QDialogButtonBox::Help|QDialogButtonBox::Ok</set>
+    <set>QDialogButtonBox::Cancel|QDialogButtonBox::Ok</set>
    </property>
   </widget>
   <widget class="QProgressBar" name="progressBar">
@@ -282,7 +282,7 @@ p, li { white-space: pre-wrap; }
       <string>Give preference for the selected features</string>
      </property>
     </widget>
-    <widget class="QgsFileWidget" name="mQgsFileWidget">
+    <widget class="QgsFileWidget" name="mQgsFileWidget" native="true">
      <property name="geometry">
       <rect>
        <x>10</x>
@@ -296,12 +296,6 @@ p, li { white-space: pre-wrap; }
        <width>381</width>
        <height>27</height>
       </size>
-     </property>
-     <property name="storageMode">
-      <enum>QgsFileWidget::GetDirectory</enum>
-     </property>
-     <property name="options">
-      <set>QFileDialog::ShowDirsOnly</set>
      </property>
     </widget>
     <widget class="QLabel" name="label_4">
@@ -444,7 +438,10 @@ p, li { white-space: pre-wrap; }
       </font>
      </property>
      <property name="text">
-      <string>Algorithm</string>
+      <string>Swap to get</string>
+     </property>
+     <property name="alignment">
+      <set>Qt::AlignLeading|Qt::AlignLeft|Qt::AlignVCenter</set>
      </property>
     </widget>
     <widget class="QComboBox" name="comboBox">
@@ -559,9 +556,9 @@ p, li { white-space: pre-wrap; }
     </size>
    </property>
    <property name="currentText">
-    <string>Advanced</string>
+    <string/>
    </property>
-   <property name="defaultText">
+   <property name="defaultText" stdset="0">
     <string>Advanced</string>
    </property>
   </widget>

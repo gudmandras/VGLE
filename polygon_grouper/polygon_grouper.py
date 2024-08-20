@@ -24,10 +24,12 @@
 from qgis.PyQt.QtCore import QSettings, QTranslator, QCoreApplication,  QVariant
 from qgis.PyQt.QtGui import QIcon
 from qgis.PyQt.QtWidgets import QAction
-from qgis.core import QgsProject, Qgis, QgsLayerTree, QgsLayerTreeLayer, QgsField, QgsVectorFileWriter, QgsVectorLayer, QgsExpression
+from qgis.core import QgsProject, Qgis, QgsLayerTree, QgsLayerTreeLayer, QgsField, QgsVectorFileWriter, QgsVectorLayer, QgsExpression, QgsProcessingFeedback
 from qgis.utils import iface
 from qgis.core import QgsFieldProxyModel
 from PyQt5.QtCore import Qt
+import qgis.core
+
 
 # Initialize Qt resources from file resources.py
 from .resources import *
@@ -210,9 +212,15 @@ class vgle:
         logging.shutdown()
 
     def fill_algorithms(self):
-        self.algorithms = ['Swap neighbours', 'Swap to get closer', "Swap neighbours, then swap to get closer", "Swap to get closer, then swap neighbours"]
+        self.algorithms = ['Neighbours', 'Closer', "Neighbours, then closer", "Closer, then neighbours"]
         for alg in self.algorithms:
             self.dlg.comboBox.addItem(alg)
+    
+    def close1():
+        raise RuntimeError
+
+    def close2():
+        self.dlg.close()
 
     def run(self):
         """Run method that performs all the real work"""
@@ -242,6 +250,11 @@ class vgle:
 
         # Set progress bar
         self.dlg.progressBar.setRange(0, 100)
+        f = QgsProcessingFeedback()
+        f.progressChanged.connect(self.set_progress_bar)
+
+        self.dlg.pushButton.clicked(self.close1)
+        self.dlg.button_box.rejected.connect(self.close2)
 
         # Run the dialog event loop
         result = self.dlg.exec_()
@@ -281,7 +294,7 @@ class vgle:
             logging.debug(f'Tolerance: {str(field4)}')
             logging.debug(f'Output dir: {str(field5)}')
 
-            temp_layer = self.create_temp_layer(input_layer, field5, "swapped")
+            temp_layer = self.create_temp_layer(input_layer, field5, self.algorithms[field8].lower())
             swaped_layer = None
             merged_layer = None
             try:
@@ -295,32 +308,35 @@ class vgle:
                 self.determine_seed_polygons(field1, layer)
 
                 if field8 < 2:
-                    self.set_progress_bar(20)
+                    #self.set_progress_bar(20)
                     if field8 == 0:
                         swaped_layer = self.swap_iteration(layer)
                     elif field8 == 1:
+                        self.check_seed_number()
                         swaped_layer = self.closer(layer)
                 else:
-                    self.set_progress_bar(10)
+                    #self.set_progress_bar(10)
                     if field8 == 2:
+                        self.check_seed_number()
                         swaped_layer = self.swap_iteration(layer)
-                        self.set_progress_bar(50)
+                        #self.set_progress_bar(50)
                         swaped_layer = self.closer(swaped_layer)
                     elif field8 == 3:
+                        self.check_seed_number()
                         swaped_layer = self.closer(layer)
-                        self.set_progress_bar(50)
+                        #self.set_progress_bar(50)
                         swaped_layer = self.swap_iteration(swaped_layer)
-                if field8 < 2:
-                    self.set_progress_bar(80)
-                else:
-                    self.set_progress_bar(90)
+                #if field8 < 2:
+                    #self.set_progress_bar(80)
+                #else:
+                    #self.set_progress_bar(90)
 
                 QgsProject.instance().addMapLayer(swaped_layer, False)
                 root = QgsProject().instance().layerTreeRoot()
                 root.insertLayer(0, swaped_layer)
 
                 merged_layer = self.create_merged_file(swaped_layer, field5)
-                self.set_progress_bar(100)
+                #self.set_progress_bar(100)
 
                 QgsProject.instance().addMapLayer(merged_layer, False)
                 root = QgsProject().instance().layerTreeRoot()
@@ -329,7 +345,7 @@ class vgle:
                 main_end_time = time.time()
                 logging.debug(f'Script time:{main_end_time-main_start_time}')
                 self.end_logging()
-                self.set_progress_bar(0)
+                #self.set_progress_bar(0)
             except:
                 QgsProject.instance().removeMapLayer(temp_layer)
                 root = QgsProject().instance().layerTreeRoot()
@@ -344,6 +360,12 @@ class vgle:
                     root.removeLayer(merged_layer)
                 self.set_progress_bar(0)
 
+    def check_seed_number(self):
+        for seed in self.seeds.values():
+            if len(seed) > 1:
+                qgis.utils.iface.messageBar().pushMessage("More than one feature preference for one holder at closer function - algorithm stop", level=Qgis.Critical, duration=30)
+                self.close1()
+
     def get_selected_features(self, input_layer):
         alg_params = {
             'INPUT': input_layer,
@@ -353,9 +375,14 @@ class vgle:
 
     def create_temp_layer(self, layer, directory, postfix):
         if directory:
-            path = os.path.join(directory, f"{str(layer.name())}_{postfix}.shp")
-            if os.path.isfile(path):
-                QgsVectorFileWriter.deleteShapeFile(path)
+            counter = 1
+            while True:
+                path = os.path.join(directory, f"{str(layer.name())}_{postfix}.shp")
+                if os.path.isfile(path):
+                    #QgsVectorFileWriter.deleteShapeFile(path)
+                    path = f'{path[:-4]}_{counter}.shp'
+                else:
+                    break
             options = QgsVectorFileWriter.SaveVectorOptions()
             options.driverName = "ESRI Shapefile"
             options.fileEncoding = "UTF-8"
@@ -380,9 +407,6 @@ class vgle:
             return layer, field1[0]
         else:
             layer, field_name = self.set_temp_holder_field(layer)
-            QgsProject.instance().addMapLayer(layer, False)
-            root = QgsProject().instance().layerTreeRoot()
-            root.insertLayer(0, layer)
             layer = self.set_temp_holder_value(layer, field_name, field1)
             return layer, field_name
 
@@ -413,13 +437,13 @@ class vgle:
             for attr in attributes:
                 value = feature.attribute(attr)
                 logging.debug(value)
-                if value is not None:
+                if value != qgis.core.NULL:
                     logging.debug(value)
                     tempList.append(value)
             temp_string = ''
             for turn, tmp in enumerate(tempList):
                 if len(tempList) > 1:
-                    if tmp != '' and tmp != 'NULL':
+                    if tmp != '' and tmp  != qgis.core.NULL:
                         if tmp != tempList[-1]:
                             temp_string += f'{tmp},'
                         else:
@@ -428,7 +452,7 @@ class vgle:
                             if temp_string not in big_list:
                                 big_list.append(temp_string)
                 else:
-                    if tmp and tmp != '' and tmp != 'NULL':
+                    if tmp and tmp != '' and tmp  != qgis.core.NULL:
                         if temp_string not in big_list:
                             temp_string += f'{tmp}'
         logging.debug(big_list)
@@ -438,7 +462,7 @@ class vgle:
             list_unique = lista.split(',')
             logging.debug(list_unique)
             for turn, unique in enumerate(list_unique):
-                if unique != '' and unique != 'NULL':
+                if unique != qgis.core.NULL:
                     if type(unique) == str:
                         if turn+1 != len(list_unique):
                             expression += '"{field}"=\'{value}\' AND '.format(field=attributes[turn],value=str(unique))
@@ -502,11 +526,12 @@ class vgle:
         features = layer.getFeatures()
         for feature in features:
             feature_id = feature.id()
-            holder = feature.attribute(self.holder_attribute)
-            if holder in list(holders_with_holdings.keys()):
-                holders_with_holdings[holder].append(feature_id)
-            else:
-                holders_with_holdings[holder] = [feature_id]
+            if holder != qgis.core.NULL and feature != qgis.core.NULL:
+                holder = feature.attribute(self.holder_attribute)
+                if holder in list(holders_with_holdings.keys()):
+                    holders_with_holdings[holder].append(feature_id)
+                else:
+                    holders_with_holdings[holder] = [feature_id]
         return holders_with_holdings
 
     def calculate_total_area(self):
