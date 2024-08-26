@@ -600,8 +600,8 @@ class vgle:
         changer = True
         try:
             turn = int(self.nholder_attribute.split('_')[0])
-            self.nholder_attribute = str(int(self.nholder_attribute.split('_')[0])-1) + self.nholder_attribute[1:]
-            self.nid_attribute = str(int(self.nid_attribute.split('_')[0])-1) + self.nid_attribute[1:]
+            self.nholder_attribute = str(int(self.nholder_attribute.split('_')[0])) + self.nholder_attribute[1:]
+            self.nid_attribute = str(int(self.nid_attribute.split('_')[0])) + self.nid_attribute[1:]
         except AttributeError:
             turn = 0
         self.global_changables = self.get_changable_holdings()
@@ -650,7 +650,10 @@ class vgle:
                 ngh_ids, neighbours = self.get_neighbours(layer, seeds[0])
                 in_distance = self.distance_search(layer, seeds[0])
                 distance_changes = self.get_changable_holdings(in_distance)
-                local_changables = [dist for dist in distance_changes if dist in self.global_changables]
+                if changables:
+                    local_changables = [dist for dist in distance_changes if dist in self.global_changables and dist in changables]
+                else:
+                    local_changables = [dist for dist in distance_changes if dist in self.global_changables]
                 layer, changables, total_areas = self.search_for_changes(layer, seeds[0], local_changables, ngh_ids, neighbours, total_areas, holder, holdings)
             else:
                 for seed in seeds:
@@ -734,7 +737,7 @@ class vgle:
             holder_total_area = total_areas[holder]
             #Filter holdings
             filtered_holdings_ids = self.ids_for_change(holdings_ids, changables)
-            if holdings_ids:
+            if filtered_holdings_ids:
                 # Get ngh holder name
                 ngh_holder = int(nghfeat.attribute(self.nholder_attribute))
                 # Get holder total area
@@ -743,10 +746,13 @@ class vgle:
                 ngh_holdings = self.hol_w_hol[ngh_holder]
                 # Filter holdings
                 ngh_holdings_ids = self.ids_for_change(ngh_holdings, changables)
-                if ngh_holdings_ids:
-                    # Filter out nghs
-                    filtered_ngh_holdings_ids = [h_id for h_id in ngh_holdings_ids if h_id not in ngh_ids]
+                # Filter out nghs
+                filtered_ngh_holdings_ids = []
+                for h_id in ngh_holdings_ids:
+                    if h_id not in ngh_ids:
+                        filtered_ngh_holdings_ids.append(h_id)
 
+                if filtered_ngh_holdings_ids:
                     ngh_feat_id = nghfeat.attribute(self.id_attribute)
                     if ngh_feat_id in changables:
                         filtered_ngh_holdings_ids.append(ngh_feat_id)
@@ -1007,7 +1013,7 @@ class vgle:
                                         self.hol_w_hol[change_holder].pop(self.hol_w_hol[change_holder].index(ch))
                                         self.hol_w_hol[holder].append(ch)
                                         changables.pop(changables.index(ch))
-                                    self.set_new_attribute(layer, temp_holder_combo[0], holder, self.nholder_attribute)
+                                    self.set_new_attribute(layer, temp_holder_combo[0], change_holder, self.nholder_attribute)
                                     self.set_new_attribute(layer, temp_holder_combo[0], ','.join(temp_ch_combo), self.nid_attribute)
                                     self.hol_w_hol[holder].pop(self.hol_w_hol[holder].index(temp_holder_combo[0]))
                                     self.hol_w_hol[change_holder].append(temp_holder_combo[0])
@@ -1039,12 +1045,13 @@ class vgle:
                 logging.debug(f'Changes in turn {turner}: {self.counter}')
             elif turner == 5:
                 changer = False
-                layer.startEditing()
-                indexes = []
-                indexes.append(layer.fields().indexFromName(self.nid_attribute))
-                indexes.append(layer.fields().indexFromName(self.nholder_attribute))
-                layer.deleteAttributes(indexes)
-                layer.updateFields()
+                if changes == self.counter:
+                    layer.startEditing()
+                    indexes = []
+                    indexes.append(layer.fields().indexFromName(self.nid_attribute))
+                    indexes.append(layer.fields().indexFromName(self.nholder_attribute))
+                    layer.deleteAttributes(indexes)
+                    layer.updateFields()
             else:
                 logging.debug(f'Changes in turn {turner}: {self.counter - changes}')
                 if changes == self.counter:
