@@ -249,8 +249,8 @@ class vgle:
 
         # Set progress bar
         self.dlg.progressBar.setRange(0, 100)
-        f = QgsProcessingFeedback()
-        f.progressChanged.connect(self.set_progress_bar)
+        #f = QgsProcessingFeedback()
+        #f.progressChanged.connect(self.set_progress_bar)
 
         self.dlg.pushButton.clicked.connect(self.close1)
         self.dlg.button_box.rejected.connect(self.close2)
@@ -305,40 +305,41 @@ class vgle:
                 self.hol_w_aea = holdings_with_area
                 self.holder_total_area = self.calculate_total_area()
                 self.determine_seed_polygons(field1, layer)
-
+                logging.info(type(self).__name__)
                 if field8 < 2:
-                    #self.set_progress_bar(20)
+                    self.set_progress_bar(20)
                     if field8 == 0:
                         swaped_layer = self.swap_iteration(layer)
                     elif field8 == 1:
                         self.check_seed_number()
                         swaped_layer = self.closer(layer)
                 else:
-                    #self.set_progress_bar(10)
+                    self.set_progress_bar(10)
                     if field8 == 2:
                         self.check_seed_number()
+                        original_seeds = copy.deepcopy(self.seeds)
                         swaped_layer = self.swap_iteration(layer)
-                        #self.set_progress_bar(50)
-                        swaped_layer = self.closer(swaped_layer)
+                        self.set_progress_bar(50)
+                        swaped_layer = self.closer(swaped_layer, original_seeds)
                     elif field8 == 3:
                         self.check_seed_number()
                         swaped_layer = self.closer(layer)
-                        #self.set_progress_bar(50)
+                        self.set_progress_bar(50)
                         swaped_layer = self.swap_iteration(swaped_layer)
-                #if field8 < 2:
-                    #self.set_progress_bar(80)
-                #else:
-                    #self.set_progress_bar(90)
+                if field8 < 2:
+                    self.set_progress_bar(80)
+                else:
+                    self.set_progress_bar(90)
 
                 QgsProject.instance().addMapLayer(swaped_layer, False)
                 root = QgsProject().instance().layerTreeRoot()
                 root.insertLayer(0, swaped_layer)
-                swaped_layer.commitChanges
-                iface.vectorLayerTools().stopEditing(swaped_layer)
+                swaped_layer.commitChanges()
+                #iface.vectorLayerTools().stopEditing(swaped_layer)
 
                 if field8 == 0 or field8 == 2 or field8 == 3:
                     merged_layer = self.create_merged_file(swaped_layer, field5)
-                    #self.set_progress_bar(100)
+                    self.set_progress_bar(100)
 
                     QgsProject.instance().addMapLayer(merged_layer, False)
                     root = QgsProject().instance().layerTreeRoot()
@@ -347,7 +348,7 @@ class vgle:
                 main_end_time = time.time()
                 logging.debug(f'Script time:{main_end_time-main_start_time}')
                 self.end_logging()
-                #self.set_progress_bar(0)
+                self.set_progress_bar(0)
             except:
                 QgsProject.instance().removeMapLayer(temp_layer)
                 root = QgsProject().instance().layerTreeRoot()
@@ -597,18 +598,24 @@ class vgle:
         self.counter = 0
         changes = 1
         changer = True
-        turn = 0
+        try:
+            turn = int(self.nholder_attribute.split('_')[0])
+            self.nholder_attribute = str(int(self.nholder_attribute.split('_')[0])-1) + self.nholder_attribute[1:]
+            self.nid_attribute = str(int(self.nid_attribute.split('_')[0])-1) + self.nid_attribute[1:]
+        except AttributeError:
+            turn = 0
         self.global_changables = self.get_changable_holdings()
         local_total_areas = copy.deepcopy(self.holder_total_area)
         while changer:
             turn += 1
             logging.debug(
                 f"Turn {turn - 1}'s fraction number: {len(list(self.seeds.values())) / len(list(self.hol_w_hol.values()))}")
-            layer, local_total_areas = self.swap(layer, local_total_areas, turn)
+            layer, local_total_areas, local_changables = self.swap(layer, local_total_areas, turn)
             if turn == 1:
                 changes = copy.deepcopy(self.counter)
                 logging.debug(f'Changes in turn {turn}: {self.counter}')
             else:
+                logging.debug(f'Changes in turn {turn}: {self.counter-changes}')
                 if changes == self.counter:
                     changer = False
                     layer.startEditing()
@@ -617,9 +624,9 @@ class vgle:
                     indexes.append(layer.fields().indexFromName(self.nholder_attribute))
                     layer.deleteAttributes(indexes)
                     layer.updateFields()
+                    layer.commitChanges(False)
                 else:
                     changes = copy.deepcopy(self.counter)
-                logging.debug(f'Changes in turn {turn}: {self.counter-changes}')
         return layer
 
     def get_changable_holdings(self, in_distance=None):
@@ -643,10 +650,7 @@ class vgle:
                 ngh_ids, neighbours = self.get_neighbours(layer, seeds[0])
                 in_distance = self.distance_search(layer, seeds[0])
                 distance_changes = self.get_changable_holdings(in_distance)
-                if changables:
-                    local_changables = [dist for dist in distance_changes if dist in self.global_changables and dist in changables]
-                else:
-                    local_changables = [dist for dist in distance_changes if dist in self.global_changables]
+                local_changables = [dist for dist in distance_changes if dist in self.global_changables]
                 layer, changables, total_areas = self.search_for_changes(layer, seeds[0], local_changables, ngh_ids, neighbours, total_areas, holder, holdings)
             else:
                 for seed in seeds:
@@ -658,7 +662,7 @@ class vgle:
                     else:
                         local_changables = [dist for dist in distance_changes if dist in self.global_changables]
                     layer, changables, total_areas = self.search_for_changes(layer, seed, local_changables, ngh_ids, neighbours, total_areas, holder, holdings)
-        return layer, total_areas
+        return layer, total_areas, changables
 
     def get_neighbours(self, layer, seed):
         expression = f'"{self.id_attribute}" = \'{seed}\''
@@ -716,7 +720,14 @@ class vgle:
 
     def search_for_changes(self, layer, seed, changables, ngh_ids, neighbours, total_areas, holder, holdings):
         #Filter out nghs
-        holdings_ids = [h_id for h_id in holdings if h_id not in ngh_ids]
+        holdings_ids = []
+        for h_id in holdings:
+            if h_id in ngh_ids:
+                if h_id not in self.seeds[holder]:
+                    self.seeds[holder].append(h_id)
+            else:
+                holdings_ids.append(h_id)
+
         ngh_features = neighbours.getFeatures()
         for nghfeat in ngh_features:
             # Get holder total area
@@ -860,22 +871,28 @@ class vgle:
 
         return layer, changables, total_areas
 
-    def closer(self, layer, seeds=None, changables=None, total_areas=None):
+    def closer(self, layer, seeds=None):
         self.distance_matrix, attr_names = self.create_distance_matrix(layer)
         self.counter = 0
         changes = 1
         changer = True
-        turner = 0
         self.global_changables = self.get_changable_holdings()
-        if not total_areas:
-            local_total_areas = copy.deepcopy(self.holder_total_area)
+
+        if seeds:
+            self.seeds = seeds
+            turner = int(self.nholder_attribute.split('_')[0])
+            self.nholder_attribute = str(int(self.nholder_attribute.split('_')[0])-1) + self.nholder_attribute[1:]
+            self.nid_attribute = str(int(self.nid_attribute.split('_')[0])-1) + self.nid_attribute[1:]
         else:
-            local_total_areas = total_areas
+            turner = 0
+
+        local_total_areas = copy.deepcopy(self.holder_total_area)
         while changer:
             turner += 1
             layer = self.set_turn_attributes(layer, turner)
-            changables = copy.deepcopy(self.global_changables)
             hol_w_hol = copy.deepcopy(self.hol_w_hol)
+            changables = copy.deepcopy(self.global_changables)
+
             for holder, holdings in hol_w_hol.items():
                 holder_total_area = local_total_areas[holder]
                 seed = self.seeds[holder][0]
@@ -980,6 +997,7 @@ class vgle:
                                     self.hol_w_hol[change_holder].pop(self.hol_w_hol[change_holder].index(temp_ch_combo[0]))
                                     self.hol_w_hol[holder].append(temp_ch_combo[0])
                                     changables.pop(changables.index(temp_ch_combo[0]))
+                                    self.counter += 1
                                     logging.debug(
                                         f'Change {str(self.counter)} for {temp_ch_combo} (holder:{change_holder}) to get closer to {seed} (holder:{holder}): {temp_holder_combo} for {temp_ch_combo[0]}')
                                 else:
@@ -994,11 +1012,11 @@ class vgle:
                                     self.hol_w_hol[holder].pop(self.hol_w_hol[holder].index(temp_holder_combo[0]))
                                     self.hol_w_hol[change_holder].append(temp_holder_combo[0])
                                     changables.pop(changables.index(temp_holder_combo[0]))
+                                    self.counter += 1
                                     logging.debug(
                                         f'Change {str(self.counter)} for {temp_ch_combo} (holder:{change_holder}) to get closer to {seed} (holder:{holder}): {temp_holder_combo[0]} for {temp_ch_combo}')
                                 local_total_areas[holder] = temp_holder_total_area
                                 local_total_areas[change_holder] = temp_ch_total_area
-                                self.counter += 1
                             else:
                                 #one to one change
                                 self.set_new_attribute(layer, temp_holder_combo[0], temp_ch_combo[0], self.nid_attribute)
@@ -1028,6 +1046,7 @@ class vgle:
                 layer.deleteAttributes(indexes)
                 layer.updateFields()
             else:
+                logging.debug(f'Changes in turn {turner}: {self.counter - changes}')
                 if changes == self.counter:
                     changer = False
                     layer.startEditing()
@@ -1038,9 +1057,8 @@ class vgle:
                     layer.updateFields()
                 else:
                     changes = copy.deepcopy(self.counter)
-                logging.debug(f'Changes in turn {turner}: {self.counter - changes}')
-        return layer
 
+        return layer
 
     def create_new_attribute(self, layer, turn, adj):
         field_name = f'{turn}_{adj}'
@@ -1169,7 +1187,7 @@ class vgle:
         return area*distance
 
     def create_merged_file(self, layer, directory):
-        attribute_name = str(int(self.nholder_attribute[0])-1) + self.nholder_attribute[1:]
+        attribute_name = str(int(self.nholder_attribute.split('_')[0])-1) + self.nholder_attribute[1:]
         alg_params =  {
         'INPUT':layer,
         'FIELD':[attribute_name],
