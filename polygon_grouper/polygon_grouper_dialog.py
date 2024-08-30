@@ -23,6 +23,7 @@
 """
 
 import os
+import cProfile
 
 from qgis.PyQt import uic
 from qgis.PyQt import QtWidgets
