@@ -530,7 +530,7 @@ p, li { white-space: pre-wrap; }
   <widget class="QPushButton" name="pushButton_2">
    <property name="geometry">
     <rect>
-     <x>170</x>
+     <x>30</x>
      <y>550</y>
      <width>131</width>
      <height>31</height>
@@ -544,28 +544,6 @@ p, li { white-space: pre-wrap; }
    </property>
    <property name="text">
     <string>Run as a batch process</string>
-   </property>
-  </widget>
-  <widget class="QgsCheckableComboBox" name="mComboBox">
-   <property name="geometry">
-    <rect>
-     <x>30</x>
-     <y>550</y>
-     <width>121</width>
-     <height>30</height>
-    </rect>
-   </property>
-   <property name="minimumSize">
-    <size>
-     <width>121</width>
-     <height>30</height>
-    </size>
-   </property>
-   <property name="currentText">
-    <string>Advanced</string>
-   </property>
-   <property name="defaultText">
-    <string>Advanced</string>
    </property>
   </widget>
  </widget>

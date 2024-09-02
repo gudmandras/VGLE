@@ -40,8 +40,6 @@ import itertools
 import logging
 from datetime import datetime
 import time, copy, uuid
-import line_profiler
-profile = line_profiler.LineProfiler() 
 
 class vgle:
     """QGIS Plugin Implementation."""
@@ -184,7 +182,6 @@ class vgle:
         # will be set False in run()
         self.first_start = True
 
-
     def unload(self):
         """Removes the plugin menu item and icon from QGIS GUI."""
         for action in self.actions:
@@ -222,7 +219,6 @@ class vgle:
     def close2(self):
         self.dlg.close()
 
-    @profile
     def run(self):
         """Run method that performs all the real work"""
 
@@ -362,9 +358,6 @@ class vgle:
                     root = QgsProject().instance().layerTreeRoot()
                     root.removeLayer(merged_layer)
             finally:
-                path_profiling = r'd:\Job\GOPA\GIS Data\Results\temp9\line_profile.txt'
-                with open(path_profiling, 'w') as stream:
-                    profile.print_stats(stream=stream)
                 self.end_logging()
                 self.set_progress_bar(0)
 
@@ -600,6 +593,7 @@ class vgle:
         self.seeds = holders_with_seeds
 
     def swap_iteration(self, layer):
+        self.distance_matrix, attr_names = self.create_distance_matrix(layer)
         self.counter = 0
         changes = 1
         changer = True
@@ -653,14 +647,14 @@ class vgle:
             seeds = self.seeds[holder]
             if len(seeds) == 1:
                 ngh_ids, neighbours = self.get_neighbours(layer, seeds[0])
-                in_distance = self.distance_search(layer, seeds[0])
+                in_distance = self.distance_search(seeds[0])
                 distance_changes = self.get_changable_holdings(in_distance)
                 local_changables = [dist for dist in distance_changes if dist in self.global_changables]
                 layer, changables, total_areas = self.search_for_changes(layer, seeds[0], local_changables, ngh_ids, neighbours, total_areas, holder, holdings)
             else:
                 for seed in seeds:
                     ngh_ids, neighbours = self.get_neighbours(layer, seed)
-                    in_distance = self.distance_search(layer, seed)
+                    in_distance = self.distance_search(seed)
                     distance_changes = self.get_changable_holdings(in_distance)
                     if changables:
                         local_changables = [dist for dist in distance_changes if dist in self.global_changables and dist in changables]
@@ -691,27 +685,32 @@ class vgle:
 
         return nghs_ids, neighbours
 
-    def distance_search(self, layer, seed=None):
-        if seed:
-            search_items = []
-            feats = [feat for feat in layer.getFeatures()]
-            expression = f'"{self.id_attribute}" = \'{seed}\''
-            layer.selectByExpression(expression)
-            sel_feat = layer.selectedFeatures()[0]
-            geom_buffer = sel_feat.geometry().buffer(self.distance, -1)
-            for feat in feats:
-                if feat.geometry().intersects(geom_buffer):
-                    search_items.append(feat.attribute(self.id_attribute))
-            layer.removeSelection()
-        else:
-            search_items = []
-            feats = [feat for feat in layer.getFeatures()]
-            geom_buffer = next(layer.getFeatures()).geometry().buffer(self.distance, -1)
-            for feat in feats:
-                if feat.geometry().intersects(geom_buffer):
-                    search_items.append(feat.attribute(self.id_attribute))
-            layer.removeSelection()
+    def distance_search(self, seed):
+        search_items = []
+        distances = self.distance_matrix[seed]
+        sorted_distances = [(y, x) for y, x in zip(list(distances.values()),list(distances.keys())) if y != seed and x != seed]
+        sorted_distances.sort()
+        for value, key in sorted_distances:
+            if value <= self.distance:
+                search_items.append(key)
+            else:
+                break
         return search_items
+
+    """
+    def distance_search(self, layer, seed):
+        search_items = []
+        feats = [feat for feat in layer.getFeatures()]
+        expression = f'"{self.id_attribute}" = \'{seed}\''
+        layer.selectByExpression(expression)
+        sel_feat = layer.selectedFeatures()[0]
+        geom_buffer = sel_feat.geometry().buffer(self.distance, -1)
+        for feat in feats:
+            if feat.geometry().intersects(geom_buffer):
+                search_items.append(feat.attribute(self.id_attribute))
+        layer.removeSelection()
+        return search_items
+    """
 
     def ids_for_change(self, holding_list, changables):
         try:
@@ -901,7 +900,7 @@ class vgle:
             for holder, holdings in hol_w_hol.items():
                 holder_total_area = local_total_areas[holder]
                 seed = self.seeds[holder][0]
-                in_distance = self.distance_search(layer, seed)
+                in_distance = self.distance_search(seed)
                 distance_changes = self.get_changable_holdings(in_distance)
                 filtered_holdings_ids = self.ids_for_change(holdings, distance_changes)
                 filtered_holdings_ids = self.ids_for_change(filtered_holdings_ids, changables)
@@ -1164,10 +1163,10 @@ class vgle:
         else:
             return False
 
-    def calculate_combo_area(self, comb):
-        combo = [area for key, area in self.hol_w_aea.items() if key in comb]
-        list_combo = list(combo)
-        temp_area = sum(list_combo)
+    def calculate_combo_area(self, combo):
+        temp_area = 0
+        for comb in combo:
+            temp_area += self.hol_w_aea[comb]
         return temp_area
 
     def is_closer(self, threshold_distance, ids, seed):
