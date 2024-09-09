@@ -21,13 +21,14 @@
  *                                                                         *
  ***************************************************************************/
 """
-import sys
-
 from qgis.PyQt.QtCore import QSettings, QTranslator, QCoreApplication,  QVariant
 from qgis.PyQt.QtGui import QIcon
 from qgis.PyQt.QtWidgets import QAction
-from qgis.core import QgsProject, Qgis, QgsLayerTree, QgsLayerTreeLayer, QgsField, QgsVectorFileWriter, QgsVectorLayer, QgsExpression
+from qgis.core import QgsProject, Qgis, QgsLayerTree, QgsLayerTreeLayer, QgsField, QgsVectorFileWriter, QgsVectorLayer, QgsExpression, QgsProcessingFeedback
 from qgis.utils import iface
+from qgis.core import QgsFieldProxyModel
+from PyQt5.QtCore import Qt
+import qgis.core
 
 # Initialize Qt resources from file resources.py
 from .resources import *
@@ -39,7 +40,6 @@ import itertools
 import logging
 from datetime import datetime
 import time, copy, uuid
-
 
 class vgle:
     """QGIS Plugin Implementation."""
@@ -75,6 +75,10 @@ class vgle:
         # Check if plugin was started the first time in current QGIS session
         # Must be set in initGui() to survive plugin reloads
         self.first_start = None
+        self.dlg = vgleDialog()
+        self.dlg.button_box.accepted.disconnect()
+
+        self.dlg.button_box.accepted.connect(self.run)
 
     # noinspection PyMethodMayBeStatic
     def tr(self, message):
@@ -90,7 +94,6 @@ class vgle:
         """
         # noinspection PyTypeChecker,PyArgumentList,PyCallByClass
         return QCoreApplication.translate('vgle', message)
-
 
     def add_action(
         self,
@@ -179,7 +182,6 @@ class vgle:
         # will be set False in run()
         self.first_start = True
 
-
     def unload(self):
         """Removes the plugin menu item and icon from QGIS GUI."""
         for action in self.actions:
@@ -193,6 +195,7 @@ class vgle:
         attributes = layer.fields()
         for attr in attributes:
             self.dlg.mComboBox_2.addItemWithCheckState(str(attr.name()), 0)
+        self.dlg.mComboBox_2.view().setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
 
     def set_progress_bar(self, value):
         self.dlg.progressBar.setValue(value)
@@ -203,7 +206,18 @@ class vgle:
         logging.basicConfig(filename=path, level=logging.DEBUG, format=formatter, filemode='w')
 
     def end_logging(self): 
-        logging.shutdown() 
+        logging.shutdown()
+
+    def fill_algorithms(self):
+        self.algorithms = ['Neighbours', 'Closer', "Neighbours, then closer", "Closer, then neighbours"]
+        for alg in self.algorithms:
+            self.dlg.comboBox.addItem(alg)
+
+    def close1(self):
+        raise RuntimeError
+
+    def close2(self):
+        self.dlg.close()
 
     def run(self):
         """Run method that performs all the real work"""
@@ -212,30 +226,38 @@ class vgle:
         # Only create GUI ONCE in callback, so that it will only load when the plugin is started
         if self.first_start == True:
             self.first_start = False
-            self.dlg = vgleDialog()
-
-        try:
-            self.dlg.mMapLayerComboBox.setLayer(list(QgsProject.instance().mapLayers().values())[0])
-            if self.dlg.mMapLayerComboBox.currentLayer():
-                self.fill_attributes(self.dlg.mMapLayerComboBox.currentLayer())
-                self.dlg.mFieldComboBox_2.setLayer(self.dlg.mMapLayerComboBox.currentLayer())
-        except IndexError:
-            pass
+            self.dlg.mFieldComboBox_2.setFilters(QgsFieldProxyModel.Numeric)
+            self.fill_algorithms()
+            try:
+                self.dlg.mMapLayerComboBox.setLayer(list(QgsProject.instance().mapLayers().values())[0])
+                if self.dlg.mMapLayerComboBox.currentLayer():
+                    self.fill_attributes(self.dlg.mMapLayerComboBox.currentLayer())
+                    self.dlg.mFieldComboBox_2.setLayer(self.dlg.mMapLayerComboBox.currentLayer())
+            except IndexError:
+                pass
+        else:
+            self.dlg.activateWindow()
 
         self.dlg.mMapLayerComboBox.layerChanged.connect(self.dlg.mFieldComboBox_2.setLayer)
         self.dlg.mMapLayerComboBox.layerChanged.connect(lambda:
-           self.fill_attributes(self.dlg.mMapLayerComboBox.currentLayer()))
-
+        self.fill_attributes(self.dlg.mMapLayerComboBox.currentLayer()))
+        
         # show the dialog
         self.dlg.show()
+
+        # Set progress bar
+        self.dlg.progressBar.setRange(0, 100)
+        #f = QgsProcessingFeedback()
+        #f.progressChanged.connect(self.set_progress_bar)
+
+        self.dlg.pushButton.clicked.connect(self.close1)
+        self.dlg.button_box.rejected.connect(self.close2)
 
         # Run the dialog event loop
         result = self.dlg.exec_()
         # See if OK was pressed
 
         if result:
-            #Set progress bar
-            #self.dlg.progressBar.setRange(minimum, maximum)
             #Get inputs
             field0 = self.dlg.mMapLayerComboBox.currentText()
             field1 = self.dlg.checkBox.checkState()
@@ -252,11 +274,12 @@ class vgle:
                 self.use_single = True
             else:
                 self.use_single = False
+            field8 = self.algorithms.index(self.dlg.comboBox.currentText())
 
             input_layer = QgsProject().instance().mapLayersByName(field0)[0]
             if field1 == 2:
                 self.get_selected_features(input_layer)
-            self.start_logging(input_layer,field5)
+            self.start_logging(input_layer, field5)
 
             main_start_time = time.time()
             logging.debug(f'Start time: {datetime.now().strftime("%Y_%m_%d_%H_%M")}')
@@ -268,32 +291,81 @@ class vgle:
             logging.debug(f'Tolerance: {str(field4)}')
             logging.debug(f'Output dir: {str(field5)}')
 
-            temp_layer = self.create_temp_layer(input_layer, field5, "swapped")
+            temp_layer = self.create_temp_layer(input_layer, field5, self.algorithms[field8].lower())
+            swaped_layer = None
+            merged_layer = None
+            try:
+                layer, self.holder_attribute = self.set_holder_field(temp_layer, field2)
+                holders_with_holdings = self.get_holders_holdings(layer)
+                layer, self.id_attribute, holders_with_holdings = self.create_id_field(layer, holders_with_holdings)
+                holdings_with_area = self.get_holdings_areas(layer, field3)
+                self.hol_w_hol = holders_with_holdings
+                self.hol_w_aea = holdings_with_area
+                self.holder_total_area = self.calculate_total_area()
+                self.determine_seed_polygons(field1, layer)
+                logging.info(type(self).__name__)
+                if field8 < 2:
+                    self.set_progress_bar(20)
+                    if field8 == 0:
+                        swaped_layer = self.swap_iteration(layer)
+                    elif field8 == 1:
+                        self.check_seed_number()
+                        swaped_layer = self.closer(layer)
+                else:
+                    self.set_progress_bar(10)
+                    if field8 == 2:
+                        self.check_seed_number()
+                        original_seeds = copy.deepcopy(self.seeds)
+                        swaped_layer = self.swap_iteration(layer)
+                        self.set_progress_bar(50)
+                        swaped_layer = self.closer(swaped_layer, original_seeds)
+                    elif field8 == 3:
+                        self.check_seed_number()
+                        swaped_layer = self.closer(layer)
+                        self.set_progress_bar(50)
+                        swaped_layer = self.swap_iteration(swaped_layer)
+                if field8 < 2:
+                    self.set_progress_bar(80)
+                else:
+                    self.set_progress_bar(90)
 
-            layer, self.holder_attribute = self.set_holder_field(temp_layer, field2)
-            holders_with_holdings = self.get_holders_holdings(layer)
-            layer, self.id_attribute, holders_with_holdings = self.create_id_field(layer, holders_with_holdings)
-            holdings_with_area = self.get_holdings_areas(layer, field3)
-            self.hol_w_hol = holders_with_holdings
-            self.hol_w_aea = holdings_with_area
-            self.holder_total_area = self.calculate_total_area()
-            self.determine_seed_polygons(field1, layer)
+                QgsProject.instance().addMapLayer(swaped_layer, False)
+                root = QgsProject().instance().layerTreeRoot()
+                root.insertLayer(0, swaped_layer)
+                swaped_layer.commitChanges()
+                #iface.vectorLayerTools().stopEditing(swaped_layer)
 
-            swaped_layer = self.swap_iteration(layer)
+                if field8 == 0 or field8 == 2 or field8 == 3:
+                    merged_layer = self.create_merged_file(swaped_layer, field5)
+                    self.set_progress_bar(100)
 
-            QgsProject.instance().addMapLayer(swaped_layer, False)
-            root = QgsProject().instance().layerTreeRoot()
-            root.insertLayer(0, swaped_layer)
+                    QgsProject.instance().addMapLayer(merged_layer, False)
+                    root = QgsProject().instance().layerTreeRoot()
+                    root.insertLayer(0, merged_layer)
 
-            merged_layer = self.create_merged_file(swaped_layer,field5)
+                main_end_time = time.time()
+                logging.debug(f'Script time:{main_end_time-main_start_time}')
+            except:
+                QgsProject.instance().removeMapLayer(temp_layer)
+                root = QgsProject().instance().layerTreeRoot()
+                root.removeLayer(temp_layer)
+                if swaped_layer:
+                    QgsProject.instance().removeMapLayer(swaped_layer)
+                    root = QgsProject().instance().layerTreeRoot()
+                    root.removeLayer(swaped_layer)
+                if merged_layer:
+                    QgsProject.instance().removeMapLayer(merged_layer)
+                    root = QgsProject().instance().layerTreeRoot()
+                    root.removeLayer(merged_layer)
+            finally:
+                self.end_logging()
+                self.set_progress_bar(0)
 
-            QgsProject.instance().addMapLayer(merged_layer, False)
-            root = QgsProject().instance().layerTreeRoot()
-            root.insertLayer(0, merged_layer)
-
-            main_end_time = time.time()
-            logging.debug(f'Script time:{main_end_time-main_start_time}')
-            self.end_logging()
+    def check_seed_number(self):
+        for seed in self.seeds.values():
+            if len(seed) > 1:
+                qgis.utils.iface.messageBar().pushMessage("More than one feature preference for one holder at closer function - algorithm stop", level=Qgis.Critical, duration=30)
+                self.close1()
 
     def get_selected_features(self, input_layer):
         alg_params = {
@@ -303,25 +375,35 @@ class vgle:
         self.selected_features = processing.run("native:saveselectedfeatures",alg_params)["OUTPUT"]
 
     def create_temp_layer(self, layer, directory, postfix):
-        path = os.path.join(directory,f"{str(layer.name())}_{postfix}.shp")
-        if os.path.isfile(path):
-            QgsVectorFileWriter.deleteShapeFile(path)
-        options = QgsVectorFileWriter.SaveVectorOptions()
-        options.driverName = "ESRI Shapefile"
-        options.fileEncoding = "UTF-8"
-        context = QgsProject.instance().transformContext()
-        QgsVectorFileWriter.writeAsVectorFormatV2(layer, path, context, options)
-        temp_layer = QgsVectorLayer(path, f"{postfix} layer", "ogr")
-        return temp_layer
+        if directory:
+            path = os.path.join(directory, f"{str(layer.name())}_{postfix}.shp")
+            while os.path.isfile(path):
+                timestamp = datetime.fromtimestamp(time.time()).strftime("%d_%m_%Y_%H_%M_%S")
+                path = os.path.join(directory, f"{str(layer.name())}_{postfix}_{timestamp}.shp")
+            options = QgsVectorFileWriter.SaveVectorOptions()
+            options.driverName = "ESRI Shapefile"
+            options.fileEncoding = "UTF-8"
+            context = QgsProject.instance().transformContext()
+            QgsVectorFileWriter.writeAsVectorFormatV2(layer, path, context, options)
+            temp_layer = QgsVectorLayer(path, f"{postfix} layer", "ogr")
+            return temp_layer
+        else:
+            epsg = layer.crs().geographicCrsAuthId()[-4:]
+            feats = [feature for feature in layer.getFeatures()]
+            mem_layer = QgsVectorLayer(f"Polygon?crs=epsg:{epsg}", f"{postfix} layer", "memory")
+            mem_layer_data = mem_layer.dataProvider()
+            attr = layer.dataProvider().fields().toList()
+            mem_layer_data.addAttributes(attr)
+            mem_layer.updateFields()
+            mem_layer_data.addFeatures(feats)
+            mem_layer.commitChanges()
+            return mem_layer
 
     def set_holder_field(self, layer, field1):
         if len(field1) == 1:
             return layer, field1[0]
         else:
             layer, field_name = self.set_temp_holder_field(layer)
-            QgsProject.instance().addMapLayer(layer, False)
-            root = QgsProject().instance().layerTreeRoot()
-            root.insertLayer(0, layer)
             layer = self.set_temp_holder_value(layer, field_name, field1)
             return layer, field_name
 
@@ -352,13 +434,13 @@ class vgle:
             for attr in attributes:
                 value = feature.attribute(attr)
                 logging.debug(value)
-                if value is not None:
+                if value != qgis.core.NULL:
                     logging.debug(value)
                     tempList.append(value)
             temp_string = ''
             for turn, tmp in enumerate(tempList):
                 if len(tempList) > 1:
-                    if tmp != '' and tmp != 'NULL':
+                    if tmp != '' and tmp  != qgis.core.NULL:
                         if tmp != tempList[-1]:
                             temp_string += f'{tmp},'
                         else:
@@ -367,7 +449,7 @@ class vgle:
                             if temp_string not in big_list:
                                 big_list.append(temp_string)
                 else:
-                    if tmp and tmp != '' and tmp != 'NULL':
+                    if tmp and tmp != '' and tmp  != qgis.core.NULL:
                         if temp_string not in big_list:
                             temp_string += f'{tmp}'
         logging.debug(big_list)
@@ -377,7 +459,7 @@ class vgle:
             list_unique = lista.split(',')
             logging.debug(list_unique)
             for turn, unique in enumerate(list_unique):
-                if unique != '' and unique != 'NULL':
+                if unique != qgis.core.NULL:
                     if type(unique) == str:
                         if turn+1 != len(list_unique):
                             expression += '"{field}"=\'{value}\' AND '.format(field=attributes[turn],value=str(unique))
@@ -425,7 +507,6 @@ class vgle:
         for holder, holdings in holders.items():
             counter = 0
             for feature_id in holdings:
-        #        new_id = f'{str(holder)}/{counter}'
                 new_id = str(uuid.uuid4())
                 layer.changeAttributeValue(feature_id,attribute_id,new_id)
                 counter += 1
@@ -443,10 +524,11 @@ class vgle:
         for feature in features:
             feature_id = feature.id()
             holder = feature.attribute(self.holder_attribute)
-            if holder in list(holders_with_holdings.keys()):
-                holders_with_holdings[holder].append(feature_id)
-            else:
-                holders_with_holdings[holder] = [feature_id]
+            if holder != qgis.core.NULL:
+                if holder in list(holders_with_holdings.keys()):
+                    holders_with_holdings[holder].append(feature_id)
+                else:
+                    holders_with_holdings[holder] = [feature_id]
         return holders_with_holdings
 
     def calculate_total_area(self):
@@ -511,27 +593,39 @@ class vgle:
         self.seeds = holders_with_seeds
 
     def swap_iteration(self, layer):
+        self.distance_matrix, attr_names = self.create_distance_matrix(layer)
         self.counter = 0
         changes = 1
         changer = True
-        turn = 0
+        try:
+            turn = int(self.nholder_attribute.split('_')[0])
+            self.nholder_attribute = str(int(self.nholder_attribute.split('_')[0])-1) + self.nholder_attribute[1:]
+            self.nid_attribute = str(int(self.nid_attribute.split('_')[0])-1) + self.nid_attribute[1:]
+        except AttributeError:
+            turn = 0
         self.global_changables = self.get_changable_holdings()
-        temp = self.holder_total_area
-        local_total_areas = copy.deepcopy(temp)
+        local_total_areas = copy.deepcopy(self.holder_total_area)
         while changer:
             turn += 1
             logging.debug(
                 f"Turn {turn - 1}'s fraction number: {len(list(self.seeds.values())) / len(list(self.hol_w_hol.values()))}")
-            layer, local_total_areas = self.swap(layer, local_total_areas, turn)
+            layer, local_total_areas, local_changables = self.swap(layer, local_total_areas, turn)
             if turn == 1:
                 changes = copy.deepcopy(self.counter)
                 logging.debug(f'Changes in turn {turn}: {self.counter}')
             else:
+                logging.debug(f'Changes in turn {turn}: {self.counter-changes}')
                 if changes == self.counter:
                     changer = False
+                    layer.startEditing()
+                    indexes = []
+                    indexes.append(layer.fields().indexFromName(self.nid_attribute))
+                    indexes.append(layer.fields().indexFromName(self.nholder_attribute))
+                    layer.deleteAttributes(indexes)
+                    layer.updateFields()
+                    layer.commitChanges(False)
                 else:
                     changes = copy.deepcopy(self.counter)
-                logging.debug(f'Changes in turn {turn}: {self.counter-changes}')
         return layer
 
     def get_changable_holdings(self, in_distance=None):
@@ -553,24 +647,21 @@ class vgle:
             seeds = self.seeds[holder]
             if len(seeds) == 1:
                 ngh_ids, neighbours = self.get_neighbours(layer, seeds[0])
-                in_distance = self.distance_search(layer, seeds[0])
+                in_distance = self.distance_search(seeds[0])
                 distance_changes = self.get_changable_holdings(in_distance)
-                if changables:
-                    local_changables = [dist for dist in distance_changes if dist in self.global_changables and dist in changables]
-                else:
-                    local_changables = [dist for dist in distance_changes if dist in self.global_changables]
+                local_changables = [dist for dist in distance_changes if dist in self.global_changables]
                 layer, changables, total_areas = self.search_for_changes(layer, seeds[0], local_changables, ngh_ids, neighbours, total_areas, holder, holdings)
             else:
                 for seed in seeds:
                     ngh_ids, neighbours = self.get_neighbours(layer, seed)
-                    in_distance = self.distance_search(layer, seed)
+                    in_distance = self.distance_search(seed)
                     distance_changes = self.get_changable_holdings(in_distance)
                     if changables:
                         local_changables = [dist for dist in distance_changes if dist in self.global_changables and dist in changables]
                     else:
                         local_changables = [dist for dist in distance_changes if dist in self.global_changables]
                     layer, changables, total_areas = self.search_for_changes(layer, seed, local_changables, ngh_ids, neighbours, total_areas, holder, holdings)
-        return layer, total_areas
+        return layer, total_areas, changables
 
     def get_neighbours(self, layer, seed):
         expression = f'"{self.id_attribute}" = \'{seed}\''
@@ -594,22 +685,32 @@ class vgle:
 
         return nghs_ids, neighbours
 
+    def distance_search(self, seed):
+        search_items = []
+        distances = self.distance_matrix[seed]
+        sorted_distances = [(y, x) for y, x in zip(list(distances.values()),list(distances.keys())) if y != seed and x != seed]
+        sorted_distances.sort()
+        for value, key in sorted_distances:
+            if value <= self.distance:
+                search_items.append(key)
+            else:
+                break
+        return search_items
+
+    """
     def distance_search(self, layer, seed):
         search_items = []
         feats = [feat for feat in layer.getFeatures()]
         expression = f'"{self.id_attribute}" = \'{seed}\''
         layer.selectByExpression(expression)
-        sel_feat = layer.selectedFeatures()
-        buffers = []
-        for sel in sel_feat:
-            geom_buffer = sel.geometry().buffer(self.distance, -1)
-            buffers.append(geom_buffer)
+        sel_feat = layer.selectedFeatures()[0]
+        geom_buffer = sel_feat.geometry().buffer(self.distance, -1)
         for feat in feats:
-            for buff in buffers:
-                if feat.geometry().intersects(buff):
-                    search_items.append(feat.attribute(self.id_attribute))
+            if feat.geometry().intersects(geom_buffer):
+                search_items.append(feat.attribute(self.id_attribute))
         layer.removeSelection()
         return search_items
+    """
 
     def ids_for_change(self, holding_list, changables):
         try:
@@ -622,12 +723,19 @@ class vgle:
             return None
 
     def search_for_changes(self, layer, seed, changables, ngh_ids, neighbours, total_areas, holder, holdings):
-        #Get holder total area
-        holder_total_area = total_areas[holder]
         #Filter out nghs
-        holdings_ids = [h_id for h_id in holdings if h_id not in ngh_ids]
+        holdings_ids = []
+        for h_id in holdings:
+            if h_id in ngh_ids:
+                if h_id not in self.seeds[holder]:
+                    self.seeds[holder].append(h_id)
+            else:
+                holdings_ids.append(h_id)
+
         ngh_features = neighbours.getFeatures()
         for nghfeat in ngh_features:
+            # Get holder total area
+            holder_total_area = total_areas[holder]
             #Filter holdings
             filtered_holdings_ids = self.ids_for_change(holdings_ids, changables)
             if holdings_ids:
@@ -661,16 +769,12 @@ class vgle:
 
                         holder_comb_totals = []
                         for comb in holder_combinations:
-                            combo = [area for key, area in self.hol_w_aea.items() if key in comb]
-                            list_combo = list(combo)
-                            temp_area = sum(list_combo)
+                            temp_area = self.calculate_combo_area(comb)
                             holder_comb_totals.append(temp_area)
 
                         ngh_holder_comb_totals = []
                         for comb in ngh_combinations:
-                            combo = [area for key, area in self.hol_w_aea.items() if key in comb]
-                            list_combo = list(combo)
-                            temp_area = sum(list_combo)
+                            temp_area = self.calculate_combo_area(comb)
                             ngh_holder_comb_totals.append(temp_area)
 
                         total_areas_difference = []
@@ -681,13 +785,9 @@ class vgle:
                         for holder_comb in holder_comb_totals:
                             for ngh_comb in ngh_holder_comb_totals:
                                 new_holder_total_area = holder_total_area - holder_comb + ngh_comb
-                                if new_holder_total_area > self.holder_total_area[holder] - (
-                                        self.holder_total_area[holder] * (self.tolerance / 100)) and new_holder_total_area < self.holder_total_area[holder] + (
-                                        self.holder_total_area[holder] * (self.tolerance / 100)):
+                                if self.check_total_area_threshold(new_holder_total_area, holder):
                                     new_ngh_total_area = ngh_holder_total_area - ngh_comb + holder_comb
-                                    if new_ngh_total_area > self.holder_total_area[ngh_holder] - (
-                                        self.holder_total_area[ngh_holder] * (self.tolerance / 100)) and new_ngh_total_area < self.holder_total_area[ngh_holder] + (
-                                        self.holder_total_area[ngh_holder] * (self.tolerance / 100)):
+                                    if self.check_total_area_threshold(new_ngh_total_area, ngh_holder):
                                         total_areas_difference.append(new_holder_total_area-holder_total_area)
                                         holder_new_total_areas.append(new_holder_total_area)
                                         ngh_new_total_areas.append(new_ngh_total_area)
@@ -775,8 +875,194 @@ class vgle:
 
         return layer, changables, total_areas
 
-    def closer(self):
-        pass
+    def closer(self, layer, seeds=None):
+        self.distance_matrix, attr_names = self.create_distance_matrix(layer)
+        self.counter = 0
+        changes = 1
+        changer = True
+        self.global_changables = self.get_changable_holdings()
+
+        if seeds:
+            self.seeds = seeds
+            turner = int(self.nholder_attribute.split('_')[0])
+            self.nholder_attribute = str(int(self.nholder_attribute.split('_')[0])-1) + self.nholder_attribute[1:]
+            self.nid_attribute = str(int(self.nid_attribute.split('_')[0])-1) + self.nid_attribute[1:]
+        else:
+            turner = 0
+
+        local_total_areas = copy.deepcopy(self.holder_total_area)
+        while changer:
+            turner += 1
+            layer = self.set_turn_attributes(layer, turner)
+            hol_w_hol = copy.deepcopy(self.hol_w_hol)
+            changables = copy.deepcopy(self.global_changables)
+
+            for holder, holdings in hol_w_hol.items():
+                holder_total_area = local_total_areas[holder]
+                seed = self.seeds[holder][0]
+                in_distance = self.distance_search(seed)
+                distance_changes = self.get_changable_holdings(in_distance)
+                filtered_holdings_ids = self.ids_for_change(holdings, distance_changes)
+                filtered_holdings_ids = self.ids_for_change(filtered_holdings_ids, changables)
+                for holding in holdings:
+                    filtered_holdings_ids = self.ids_for_change(filtered_holdings_ids, self.hol_w_hol[holder])
+                    if holding != seed and holding in filtered_holdings_ids:
+                        temp_holder_combo = None
+                        temp_ch_combo = None
+                        temp_holder_total_area = None
+                        temp_ch_total_area = None
+                        change_holder = None
+                        measure = None
+
+                        holder_combinations = []
+                        for L in range(len(filtered_holdings_ids) + 1):
+                            for subset in itertools.combinations(filtered_holdings_ids, L):
+                                if len(subset) >= 1 and subset not in holder_combinations:
+                                    holder_combinations.append(subset)
+                        filtered_local_changables = [dist for dist in distance_changes if
+                                                        dist not in filtered_holdings_ids and dist in changables]
+
+                        ch_holders = []
+                        for local_ch in filtered_local_changables:
+                            one_ch_holder = [all_holder for all_holder, all_holdings in self.hol_w_hol.items() if
+                                                local_ch in all_holdings and all_holder not in ch_holders]
+                            if len(one_ch_holder) == 1:
+                                ch_holders.append(one_ch_holder[0])
+
+                        for ch_holder in ch_holders:
+                            change_holder_seed = self.seeds[ch_holder][0]
+                            filtered_local_ch_holdings = [hold for hold in self.hol_w_hol[ch_holder] if
+                                                            hold in filtered_local_changables]
+
+                            ch_combinations = []
+                            for L in range(len(filtered_local_ch_holdings) + 1):
+                                for subset in itertools.combinations(filtered_local_ch_holdings, L):
+                                    if len(subset) >= 1 and subset not in ch_combinations:
+                                        ch_combinations.append(subset)
+
+                            for turn, holder_comb in enumerate(holder_combinations):
+                                for turnn, ch_comb in enumerate(ch_combinations):
+                                    holder_max_distance = self.max_distance(holder_comb, seed)
+                                    ch_max_distance = self.max_distance(ch_comb, change_holder_seed)
+                                    ch_closer = self.is_closer(holder_max_distance, ch_comb, seed)
+                                    holder_closer = self.is_closer(ch_max_distance, holder_comb, change_holder_seed)
+                                    if ch_closer and holder_closer:
+                                        new_holder_total_area = holder_total_area - self.calculate_combo_area(holder_comb) + self.calculate_combo_area(ch_comb)
+                                        if self.check_total_area_threshold(new_holder_total_area,holder):
+                                            new_ch_total_area = local_total_areas[ch_holder] - self.calculate_combo_area(ch_comb) + self.calculate_combo_area(holder_comb)
+                                            if self.check_total_area_threshold(new_ch_total_area, ch_holder):
+                                                local_measure = sum([self.calculate_composite_number(seed, temp_id) for temp_id in holder_comb])
+                                                if not measure:
+                                                    change_holder = ch_holder
+                                                    temp_holder_combo = holder_comb
+                                                    temp_ch_combo = ch_comb
+                                                    measure = local_measure
+                                                    temp_holder_total_area = new_holder_total_area
+                                                    temp_ch_total_area = new_ch_total_area
+                                                else:
+                                                    if measure < local_measure:
+                                                        change_holder = ch_holder
+                                                        temp_holder_combo = holder_comb
+                                                        temp_ch_combo = ch_comb
+                                                        measure = local_measure
+                                                        temp_holder_total_area = new_holder_total_area
+                                                        temp_ch_total_area = new_ch_total_area
+                        if measure:
+                            if len(temp_holder_combo) > 1 and len(temp_ch_combo) > 1:
+                                #many to many change
+                                for hold in temp_holder_combo:
+                                    self.set_new_attribute(layer, hold, ','.join(temp_holder_combo), self.nid_attribute)
+                                    self.set_new_attribute(layer, hold, change_holder, self.nholder_attribute)
+                                    self.hol_w_hol[holder].pop(self.hol_w_hol[holder].index(hold))
+                                    self.hol_w_hol[change_holder].append(hold)
+                                    changables.pop(changables.index(hold))
+                                for ch in temp_ch_combo:
+                                    self.set_new_attribute(layer, ch, ','.join(temp_ch_combo), self.nid_attribute)
+                                    self.set_new_attribute(layer, ch, holder, self.nholder_attribute)
+                                    self.hol_w_hol[change_holder].pop(self.hol_w_hol[change_holder].index(ch))
+                                    self.hol_w_hol[holder].append(ch)
+                                    changables.pop(changables.index(ch))
+                                local_total_areas[holder] = temp_holder_total_area
+                                local_total_areas[change_holder] = temp_ch_total_area
+                                self.counter += 1
+                                logging.debug(
+                                    f'Change {str(self.counter)} for {temp_ch_combo} (holder:{change_holder}) to get closer to {seed} (holder:{holder}): {temp_holder_combo} for {temp_ch_combo}')
+                            elif len(temp_holder_combo) > 1 and len(temp_ch_combo) == 1 or len(temp_holder_combo) == 1 and len(temp_ch_combo) > 1:
+                                #many to one change
+                                if len(temp_holder_combo) > 1:
+                                    for hold in temp_holder_combo:
+                                        self.set_new_attribute(layer, hold, temp_ch_combo[0], self.nid_attribute)
+                                        self.set_new_attribute(layer, hold, change_holder, self.nholder_attribute)
+                                        self.hol_w_hol[holder].pop(self.hol_w_hol[holder].index(hold))
+                                        self.hol_w_hol[change_holder].append(hold)
+                                        changables.pop(changables.index(hold))
+                                    self.set_new_attribute(layer, temp_ch_combo[0], holder, self.nholder_attribute)
+                                    self.set_new_attribute(layer, temp_ch_combo[0], ','.join(temp_holder_combo), self.nid_attribute)
+                                    self.hol_w_hol[change_holder].pop(self.hol_w_hol[change_holder].index(temp_ch_combo[0]))
+                                    self.hol_w_hol[holder].append(temp_ch_combo[0])
+                                    changables.pop(changables.index(temp_ch_combo[0]))
+                                    self.counter += 1
+                                    logging.debug(
+                                        f'Change {str(self.counter)} for {temp_ch_combo} (holder:{change_holder}) to get closer to {seed} (holder:{holder}): {temp_holder_combo} for {temp_ch_combo[0]}')
+                                else:
+                                    for ch in temp_ch_combo:
+                                        self.set_new_attribute(layer, ch, temp_holder_combo[0], self.nid_attribute)
+                                        self.set_new_attribute(layer, ch, holder, self.nholder_attribute)
+                                        self.hol_w_hol[change_holder].pop(self.hol_w_hol[change_holder].index(ch))
+                                        self.hol_w_hol[holder].append(ch)
+                                        changables.pop(changables.index(ch))
+                                    self.set_new_attribute(layer, temp_holder_combo[0], holder, self.nholder_attribute)
+                                    self.set_new_attribute(layer, temp_holder_combo[0], ','.join(temp_ch_combo), self.nid_attribute)
+                                    self.hol_w_hol[holder].pop(self.hol_w_hol[holder].index(temp_holder_combo[0]))
+                                    self.hol_w_hol[change_holder].append(temp_holder_combo[0])
+                                    changables.pop(changables.index(temp_holder_combo[0]))
+                                    self.counter += 1
+                                    logging.debug(
+                                        f'Change {str(self.counter)} for {temp_ch_combo} (holder:{change_holder}) to get closer to {seed} (holder:{holder}): {temp_holder_combo[0]} for {temp_ch_combo}')
+                                local_total_areas[holder] = temp_holder_total_area
+                                local_total_areas[change_holder] = temp_ch_total_area
+                            else:
+                                #one to one change
+                                self.set_new_attribute(layer, temp_holder_combo[0], temp_ch_combo[0], self.nid_attribute)
+                                self.set_new_attribute(layer, temp_holder_combo[0], change_holder, self.nholder_attribute)
+                                self.set_new_attribute(layer, temp_ch_combo[0], temp_holder_combo[0], self.nid_attribute)
+                                self.set_new_attribute(layer, temp_ch_combo[0], holder, self.nholder_attribute)
+                                self.hol_w_hol[change_holder].pop(self.hol_w_hol[change_holder].index(temp_ch_combo[0]))
+                                self.hol_w_hol[holder].append(temp_ch_combo[0])
+                                self.hol_w_hol[holder].pop(self.hol_w_hol[holder].index(temp_holder_combo[0]))
+                                self.hol_w_hol[change_holder].append(temp_holder_combo[0])
+                                changables.pop(changables.index(temp_ch_combo[0]))
+                                changables.pop(changables.index(temp_holder_combo[0]))
+                                local_total_areas[holder] = temp_holder_total_area
+                                local_total_areas[change_holder] = temp_ch_total_area
+                                self.counter += 1
+                                logging.debug(
+                                    f'Change {str(self.counter)} for {temp_ch_combo[0]} (holder:{change_holder}) as neighbour of {seed} (holder:{holder}): {temp_holder_combo[0]} for {temp_ch_combo[0]}')      
+            if turner == 1:
+                changes = copy.deepcopy(self.counter)
+                logging.debug(f'Changes in turn {turner}: {self.counter}')
+            elif turner == 2:
+                changer = False
+                layer.startEditing()
+                indexes = []
+                indexes.append(layer.fields().indexFromName(self.nid_attribute))
+                indexes.append(layer.fields().indexFromName(self.nholder_attribute))
+                layer.deleteAttributes(indexes)
+                layer.updateFields()
+            else:
+                logging.debug(f'Changes in turn {turner}: {self.counter - changes}')
+                if changes == self.counter:
+                    changer = False
+                    layer.startEditing()
+                    indexes = []
+                    indexes.append(layer.fields().indexFromName(self.nid_attribute))
+                    indexes.append(layer.fields().indexFromName(self.nholder_attribute))
+                    layer.deleteAttributes(indexes)
+                    layer.updateFields()
+                else:
+                    changes = copy.deepcopy(self.counter)
+
+        return layer
 
     def create_new_attribute(self, layer, turn, adj):
         field_name = f'{turn}_{adj}'
@@ -821,18 +1107,160 @@ class vgle:
         self.nholder_attribute = new_holder
         return layer
 
+    def create_distance_matrix(self, layer):
+        alg_params = {
+        'INPUT':layer,
+        'ALL_PARTS': False,
+        'OUTPUT':'TEMPORARY_OUTPUT'
+        }
+        centroids = processing.run("native:centroids", alg_params)['OUTPUT']
+        alg_params = {
+        'INPUT':centroids,
+        'INPUT_FIELD': self.id_attribute,
+        'TARGET': centroids,
+        'TARGET_FIELD': self.id_attribute,
+        'MATRIX_TYPE': 1,
+        'NEAREST_POINTS': 0,
+        'OUTPUT':'TEMPORARY_OUTPUT'
+        }
+        matrix = processing.run("qgis:distancematrix", alg_params)['OUTPUT']
+        distance_matrix = {}
+        names = self.get_attributes_names(matrix)
+        for feature in matrix.getFeatures():
+            temp_list = {}
+            for field in names:
+                value = feature.attribute(field)
+                temp_list[field] = value
+            distance_matrix[feature.attribute('ID')] = temp_list
+
+        return distance_matrix, names
+
+    def create_merge_feature(self, layer, features_id):
+        feats = [feat for feat in layer.getFeatures()]
+        for turn, feat in enumerate(features_id):
+            if turn == 0:
+                expression = f'"{self.id_attribute}" = \'{feat}\''
+            else:
+                expression += f'AND "{self.id_attribute}" = \'{feat}\''
+        layer.selectByExpression(expression)
+        sel_feat = layer.selectedFeatures()
+        geom = None
+        for feat in sel_feat:
+            if geom == None:
+                geom = feat.geometry()
+            else:
+                geom = geom.combine(feat.geometry())
+        epsg = layer.crs().geographicCrsAuthId()[-4:]
+        lyr = QgsVectorLayer(f"Polygon?crs=epsg:{epsg}", "merged", "memory")
+        lyr.dataProvider().addFeatures([geom])
+        return lyr
+
+    def check_total_area_threshold(self, total_area, holder):
+        minimal_bound = self.holder_total_area[holder] - (self.holder_total_area[holder] * (self.tolerance / 100))
+        maximal_bound = self.holder_total_area[holder] + (self.holder_total_area[holder] * (self.tolerance / 100))
+        if total_area >= minimal_bound and total_area <= maximal_bound:
+            return True
+        else:
+            return False
+
+    def calculate_combo_area(self, combo):
+        temp_area = 0
+        for comb in combo:
+            temp_area += self.hol_w_aea[comb]
+        return temp_area
+
+    def is_closer(self, threshold_distance, ids, seed):
+        is_closer_bool = True
+        for id in ids:
+            distance = self.distance_matrix[seed][id]
+            if distance > threshold_distance:
+                is_closer_bool = False
+        return is_closer_bool
+
+    def max_distance(self, ids, seed):
+        max_distance = 0
+        for id in ids:
+            distance = self.distance_matrix[seed][id]
+            if distance > max_distance:
+                max_distance = distance
+        return max_distance
+
+    def calculate_composite_number(self, seed, id):
+        area = self.hol_w_aea[id]
+        distance = self.distance_matrix[seed][id]
+        return area*distance
+
     def create_merged_file(self, layer, directory):
+        attribute_name = str(int(self.nholder_attribute.split('_')[0])-1) + self.nholder_attribute[1:]
         alg_params =  {
         'INPUT':layer,
-        'FIELD':[self.nholder_attribute],
+        'FIELD':[attribute_name],
         'OUTPUT':'TEMPORARY_OUTPUT'
         }
         dissolved_layer = processing.run("native:dissolve",alg_params)['OUTPUT']
-        alg_params =  {
+        alg_params = {
         'INPUT':dissolved_layer,
         'OUTPUT':'TEMPORARY_OUTPUT'
         }
         simplied_layer = processing.run("native:multiparttosingleparts", alg_params)['OUTPUT']
         simplied_layer.setName(f'{os.path.basename(layer.source())[:-4]}')
-        final_layer =self.create_temp_layer(simplied_layer,directory,"merged")
+        simplied_layer.commitChanges()
+        final_layer = self.create_temp_layer(simplied_layer, directory, "merged")
         return final_layer
+
+"""
+    end_point = QgsGeometry.fromPointXY(geom[start_end])
+    buffer = end_point.buffer(20, 4) #Xm buffer with 4 segments
+    buffer_lyr=QgsVectorLayer("Polygon?crs=epsg:28355","buffer", "memory")
+    f = QgsFeature()
+    f.setGeometry(buffer)
+    buffer_lyr.dataProvider().addFeatures([f])
+    QgsProject.instance().addMapLayer(buffer_lyr)
+    
+         <property name="filters">
+      <set>QgsFieldProxyModel::Numeric</set>
+     </property>
+     
+     
+    buffer_lyr=QgsVectorLayer("Polygon?crs=epsg:20137","buffer", "memory")
+    feat = input_layer.getSelectedFeatures()
+    feat_one = [fe for fe in feat]
+    geom_buffer = feat_one[0].geometry().buffer(1000,-1)
+    f = QgsFeature()
+    f.setGeometry(geom_buffer)
+    buffer_lyr.dataProvider().addFeatures([f])
+    QgsProject.instance().addMapLayer(buffer_lyr)
+     
+    features = input_layer.getFeatures()
+    inputs = [f for f in features]
+    geoms = []
+    for feat in inputs:
+        if feat.geometry().intersects(geom_buffer):
+            f = QgsFeature()
+            geomet = feat.geometry()
+            f.setGeometry(geomet)
+            geoms.append(f)
+    for geo in geoms:
+        uffer_lyr.dataProvider().addFeatures([geo])
+    QgsProject.instance().addMapLayer(buffer_lyr)
+    
+buffer_lyr=QgsVectorLayer("Polygon?crs=epsg:20137","buffer", "memory")
+feat = input_layer.getSelectedFeatures()
+feat_one = [fe for fe in feat]
+geom_buffer = feat_one[0].geometry().buffer(1000,-1)
+f = QgsFeature()
+f.setGeometry(geom_buffer)
+buffer_lyr.dataProvider().addFeatures([f])
+features = input_layer.getFeatures()
+inputs = [f for f in features]
+geoms = []
+for feat in inputs:
+    if feat.geometry().intersects(geom_buffer):
+        f = QgsFeature()
+        geomet = feat.geometry()
+        f.setGeometry(geomet)
+        geoms.append(f)
+for geo in geoms:
+    buffer_lyr.dataProvider().addFeatures([geo])
+QgsProject.instance().addMapLayer(buffer_lyr)
+"""
