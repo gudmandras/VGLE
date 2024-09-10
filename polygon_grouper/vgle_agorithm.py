@@ -534,6 +534,7 @@ class Polygon_grouper(QgsProcessingAlgorithm):
                             layer, change_ids, total_areas = self.search_for_changes(layer, seed, local_changables, ngh_ids, neighbours, total_areas, holder, holdings, feedback)
                             changables.extend(change_ids)
             if feedback.isCanceled():
+                self.end_logging() 
                 return None, None, None
         return layer, total_areas, changables
 
@@ -762,7 +763,7 @@ class Polygon_grouper(QgsProcessingAlgorithm):
 
         return layer, changes_ids, total_areas
     
-    @profile
+    #@profile
     def closer(self, layer, feedback, seeds=None):
         self.distance_matrix, attr_names = self.create_distance_matrix(layer)
         self.counter = 0
@@ -939,10 +940,12 @@ class Polygon_grouper(QgsProcessingAlgorithm):
                                         f'Change {str(self.counter)} for {temp_ch_combo[0]} (holder:{change_holder}) as neighbour of {seed} (holder:{holder}): {temp_holder_combo[0]} for {temp_ch_combo[0]}')   
                                 feedback.pushInfo(f'Change {str(self.counter)}')   
                 if feedback.isCanceled():
+                    self.end_logging() 
                     return {}
             if turner <= 10:
                 feedback.setCurrentStep(1+turner)
             if feedback.isCanceled():
+                self.end_logging() 
                 return {}
             if turner == 1:
                 changes = copy.deepcopy(self.counter)
@@ -968,8 +971,8 @@ class Polygon_grouper(QgsProcessingAlgorithm):
                 else:
                     changes = copy.deepcopy(self.counter)
                     self.filter_touching_features(layer) 
-            with open(path_profiling, 'a') as stream:
-                profile.print_stats(stream=stream)
+            #with open(path_profiling, 'a') as stream:
+            #    profile.print_stats(stream=stream)
 
         return layer
 
@@ -1067,20 +1070,26 @@ class Polygon_grouper(QgsProcessingAlgorithm):
         lyr.dataProvider().addFeatures([geom])
         return lyr
 
-    @profile
+    #@profile
     def check_total_area_threshold(self, total_area, holder):
         minimal_bound = self.holder_total_area[holder] - (self.holder_total_area[holder] * (self.tolerance / 100))
         maximal_bound = self.holder_total_area[holder] + (self.holder_total_area[holder] * (self.tolerance / 100))
         if total_area >= minimal_bound and total_area <= maximal_bound:
+            #with open(path_profiling, 'a') as stream:
+            #    profile.print_stats(stream=stream)
             return True
         else:
+            #with open(path_profiling, 'a') as stream:
+            #    profile.print_stats(stream=stream)
             return False
 
-    @profile
+    #@profile
     def calculate_combo_area(self, combo):
         temp_area = 0
         for comb in combo:
             temp_area += self.hol_w_aea[comb]
+        #with open(path_profiling, 'a') as stream:
+        #    profile.print_stats(stream=stream)
         return temp_area
 
     def is_closer(self, threshold_distance, ids, seed):
@@ -1099,9 +1108,12 @@ class Polygon_grouper(QgsProcessingAlgorithm):
                 max_distance = distance
         return max_distance
 
+    #@profile
     def calculate_composite_number(self, seed, id):
         area = self.hol_w_aea[id]
         distance = self.distance_matrix[seed][id]
+        #with open(path_profiling, 'a') as stream:
+        #    profile.print_stats(stream=stream)
         return area*distance
 
     def filter_touching_features(self, layer):
