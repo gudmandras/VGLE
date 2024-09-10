@@ -21,7 +21,8 @@ from qgis.core import (Qgis,
                         QgsLayerTreeLayer, 
                         QgsField, 
                         QgsVectorFileWriter, 
-                        QgsVectorLayer, 
+                        QgsVectorLayer,
+                        QgsFeatureRequest, 
                         QgsExpression)
 import processing
 import qgis.core
@@ -35,6 +36,8 @@ path_profiling = r'd:\Job\GOPA\GIS Data\line_profile.txt'
 class Polygon_grouper(QgsProcessingAlgorithm):
 
     def initAlgorithm(self, config=None):
+        import ptvsd
+        ptvsd.debug_this_thread()
         self.addParameter(QgsProcessingParameterVectorLayer('Inputlayer', 'Input layer', types=[QgsProcessing.TypeVectorPolygon], defaultValue=None))
         self.addParameter(QgsProcessingParameterBoolean('Preference', 'Give preference for the selected features', defaultValue=False))
         self.addParameter(QgsProcessingParameterBoolean('Single', "Use single holding's holders polygons", defaultValue=False))
@@ -95,8 +98,8 @@ class Polygon_grouper(QgsProcessingAlgorithm):
         # overall progress through the model
         import ptvsd
         ptvsd.debug_this_thread()
-        steps = self.calculate_steps([parameters['Swaptoget']])
-        feedback = QgsProcessingMultiStepFeedback(steps, model_feedback)
+        self.steps = self.calculate_steps([parameters['Swaptoget']])
+        feedback = QgsProcessingMultiStepFeedback(self.steps, model_feedback)
         timestamp = datetime.fromtimestamp(time.time()).strftime("%d_%m_%Y_%H_%M_%S")
         results = {}
         outputs = {}
@@ -139,25 +142,23 @@ class Polygon_grouper(QgsProcessingAlgorithm):
             self.end_logging()   
             return {}
 
-        if algorithm_index < 2:
-            if algorithm_index == 0:
-                swaped_layer = self.swap_iteration(layer, feedback)
-            elif algorithm_index == 1:
-                self.check_seed_number()
-                swaped_layer = self.closer(layer, feedback)
-        else:
-            if algorithm_index == 2:
-                self.check_seed_number()
-                original_seeds = copy.deepcopy(self.seeds)
-                swaped_layer = self.swap_iteration(layer, feedback)
-                swaped_layer = self.closer(swaped_layer, feedback, original_seeds)
-            elif algorithm_index == 3:
-                self.check_seed_number()
-                swaped_layer = self.closer(layer, feedback)
-                swaped_layer = self.swap_iteration(swaped_layer, feedback)
+        if algorithm_index == 0:
+            swaped_layer = self.swap_iteration(layer, feedback)
+        elif algorithm_index == 1:
+            self.check_seed_number()
+            swaped_layer = self.closer(layer, feedback)
+        elif algorithm_index == 2:
+            self.check_seed_number()
+            original_seeds = copy.deepcopy(self.seeds)
+            swaped_layer = self.swap_iteration(layer, feedback)
+            swaped_layer = self.closer(swaped_layer, feedback, original_seeds)
+        elif algorithm_index == 3:
+            self.check_seed_number()
+            swaped_layer = self.closer(layer, feedback)
+            swaped_layer = self.swap_iteration(swaped_layer, feedback)
         
         if swaped_layer:
-            feedback.setCurrentStep(steps-1)
+            feedback.setCurrentStep(self.steps-1)
 
             QgsProject.instance().addMapLayer(swaped_layer, False)
             root = QgsProject().instance().layerTreeRoot()
@@ -173,7 +174,7 @@ class Polygon_grouper(QgsProcessingAlgorithm):
             main_end_time = time.time()
             logging.debug(f'Script time:{main_end_time-main_start_time}')
 
-            feedback.setCurrentStep(steps)
+            feedback.setCurrentStep(self.steps)
             self.end_logging()   
             return results
         else:
@@ -205,11 +206,11 @@ class Polygon_grouper(QgsProcessingAlgorithm):
 
     def calculate_steps(self, algorithm_index):
         if algorithm_index == 0:
-            return 7
+            return 13
         elif algorithm_index == 1:
-            return 12
+            return 18
         else:
-            return 17 
+            return 23 
 
     def get_field_props(self, layer, field_name):
         for field in layer.fields():
@@ -455,10 +456,11 @@ class Polygon_grouper(QgsProcessingAlgorithm):
 
     def swap_iteration(self, layer, feedback):
         try:
-            if self.distance_matrix:
+            if self.distance_matrix and self.filtered_distances:
                 pass
         except AttributeError:
             self.distance_matrix, attr_names = self.create_distance_matrix(layer)
+            self.filtered_distances = self.filter_distance_matrix()
         self.counter = 0
         changes = 1
         changer = True
@@ -481,7 +483,7 @@ class Polygon_grouper(QgsProcessingAlgorithm):
                         feedback.setCurrentStep(1 + turn)
                 else:
                     logging.debug(f'Changes in turn {turn}: {self.counter-changes}')
-                    if changes == self.counter or abs(self.counter - changes) < int(layer.featureCount()*0.01):
+                    if changes == self.counter or abs(self.counter - changes) < int(layer.featureCount()*0.01) or turn == self.steps-2:
                         changer = False
                         layer.startEditing()
                         indexes = []
@@ -492,7 +494,7 @@ class Polygon_grouper(QgsProcessingAlgorithm):
                         layer.commitChanges(False)
                     else:
                         changes = copy.deepcopy(self.counter)
-                    if turn <= 5:
+                    if turn <= self.steps-2:
                         feedback.setCurrentStep(1 + turn)
             if feedback.isCanceled():
                 return {}
@@ -500,13 +502,15 @@ class Polygon_grouper(QgsProcessingAlgorithm):
 
     def get_changable_holdings(self, in_distance=None):
         changable_holdings = []
-        for holder, holdings in self.hol_w_hol.items():
-            for holding in holdings:
-                if holding not in self.seeds[holder]:
-                    if in_distance:
-                        if holding in in_distance:
-                            changable_holdings.append(holding)
-                    else:
+        if in_distance:
+            for holding in in_distance:
+                seed_listed = [seed for seed_list in list(self.seeds.values()) for seed in seed_list]
+                if holding not in seed_listed:
+                    changable_holdings.append(holding)
+        else:
+            for holder, holdings in self.hol_w_hol.items():
+                for holding in holdings:
+                    if holding not in self.seeds[holder]:
                         changable_holdings.append(holding)
         return changable_holdings
 
@@ -518,7 +522,8 @@ class Polygon_grouper(QgsProcessingAlgorithm):
                 seeds = self.seeds[holder]
                 if len(seeds) == 1:
                     ngh_ids, neighbours = self.get_neighbours(layer, seeds[0])
-                    in_distance = self.distance_search(seeds[0])
+                    #in_distance = self.distance_search(seeds[0])
+                    in_distance = self.filtered_distances[seeds[0]]
                     distance_changes = self.get_changable_holdings(in_distance)
                     local_changables = [dist for dist in distance_changes if dist in self.global_changables and dist not in changables]
                     if len(local_changables) > 0:
@@ -527,7 +532,8 @@ class Polygon_grouper(QgsProcessingAlgorithm):
                 else:
                     for seed in seeds:
                         ngh_ids, neighbours = self.get_neighbours(layer, seed)
-                        in_distance = self.distance_search(seed)
+                        #in_distance = self.distance_search(seed)
+                        in_distance = self.filtered_distances[seeds[0]]
                         distance_changes = self.get_changable_holdings(in_distance)
                         local_changables = [dist for dist in distance_changes if dist in self.global_changables and dist not in changables]
                         if len(local_changables) > 0:
@@ -676,8 +682,6 @@ class Polygon_grouper(QgsProcessingAlgorithm):
                                 indexer = total_areas_difference.index(min(total_areas_difference))
                                 smallest = possible_holder_changes[indexer]
                                 ngh_cmbs = possible_ngh_changes[indexer]
-                                logging.debug(smallest)
-                                logging.debug(ngh_cmbs)
                                 if len(smallest) > 1 and len(ngh_cmbs) > 1:
                                     #many to many change
                                     logging.debug(
@@ -763,9 +767,14 @@ class Polygon_grouper(QgsProcessingAlgorithm):
 
         return layer, changes_ids, total_areas
     
-    #@profile
     def closer(self, layer, feedback, seeds=None):
-        self.distance_matrix, attr_names = self.create_distance_matrix(layer)
+        try:
+            if self.distance_matrix and self.filtered_distances:
+                pass
+        except AttributeError:
+            self.distance_matrix, attr_names = self.create_distance_matrix(layer)
+            self.filtered_distances = self.filter_distance_matrix()
+
         self.counter = 0
         changes = 1
         changer = True
@@ -785,24 +794,24 @@ class Polygon_grouper(QgsProcessingAlgorithm):
             layer = self.set_turn_attributes(layer, turner)
             hol_w_hol = copy.deepcopy(self.hol_w_hol)
             changables = copy.deepcopy(self.global_changables)
-            logging.debug(len(changables))
 
             for holder, holdings in hol_w_hol.items():
                 if holder != 'NULL':
                     holder_total_area = local_total_areas[holder]
                     seed = self.seeds[holder][0]
-                    in_distance = self.distance_search(seed)
+                    in_distance = self.filtered_distances[seed]
                     distance_changes = self.get_changable_holdings(in_distance)
                     filtered_holdings_ids = self.ids_for_change(holdings, distance_changes)
-                    filtered_holdings_ids = self.ids_for_change(filtered_holdings_ids, changables)
-                    filtered_holdings_ids = self.ids_for_change(filtered_holdings_ids, self.hol_w_hol[holder])
-                    holder_combinations = []
-                    for L in range(len(filtered_holdings_ids) + 1):
-                        for subset in itertools.combinations(filtered_holdings_ids, L):
-                            if len(subset) >= 1 and subset not in holder_combinations and len(subset) <= 10:
-                                holder_combinations.append(subset)
 
                     for holding in holdings:
+                        filtered_holdings_ids = self.ids_for_change(filtered_holdings_ids, changables)
+                        filtered_holdings_ids = self.ids_for_change(filtered_holdings_ids, self.hol_w_hol[holder])
+                        holder_combinations = []
+                        for L in range(len(filtered_holdings_ids) + 1):
+                            for subset in itertools.combinations(filtered_holdings_ids, L):
+                                if len(subset) >= 1 and subset not in holder_combinations and len(subset) <= 10:
+                                    holder_combinations.append(subset)
+
                         if holding != seed and holding in filtered_holdings_ids:
                             temp_holder_combo = None
                             temp_ch_combo = None
@@ -820,53 +829,53 @@ class Polygon_grouper(QgsProcessingAlgorithm):
                             for local_ch in filtered_local_changables:
                                 for all_holder, all_holdings in self.hol_w_hol.items():
                                     if local_ch in all_holdings and all_holder not in ch_holders and all_holder != 'NULL':
-                                        if len(all_holder) == 1:
-                                            ch_holders.append(all_holder[0])
+                                        #if len(all_holder) == 1:
+                                        ch_holders.append(all_holder)
 
                             for ch_holder in ch_holders:
                                 change_holder_seed = self.seeds[ch_holder][0]
                                 filtered_local_ch_holdings = [hold for hold in self.hol_w_hol[ch_holder] if
-                                                                hold in filtered_local_changables]
+                                                                hold in filtered_local_changables and hold != change_holder_seed]
 
                                 ch_combinations = []
                                 for L in range(len(filtered_local_ch_holdings) + 1):
                                     for subset in itertools.combinations(filtered_local_ch_holdings, L):
                                         if len(subset) >= 1 and subset not in ch_combinations and len(subset) <= 10:
                                             ch_max_distance = self.max_distance(subset, change_holder_seed)
+                                            its_closer = False
                                             for turn, holder_comb in enumerate(holder_combinations):
                                                 holder_max_distance = self.max_distance(holder_comb, seed)
                                                 ch_closer = self.is_closer(holder_max_distance, subset, seed)
                                                 holder_closer = self.is_closer(ch_max_distance, holder_comb, change_holder_seed)
                                                 if ch_closer and holder_closer:
-                                                    ch_combinations.append(subset)
+                                                    its_closer = True
+                                                    break
+                                            if its_closer:
+                                                ch_combinations.append(subset)
 
-                                for turn, holder_comb in enumerate(holder_combinations):
-                                    for turnn, ch_comb in enumerate(ch_combinations):
-                                        #holder_max_distance = self.max_distance(holder_comb, seed)
-                                        #ch_max_distance = self.max_distance(ch_comb, change_holder_seed)
-                                        #ch_closer = self.is_closer(holder_max_distance, ch_comb, seed)
-                                        #holder_closer = self.is_closer(ch_max_distance, holder_comb, change_holder_seed)
-                                        #if ch_closer and holder_closer:
-                                        new_holder_total_area = holder_total_area - self.calculate_combo_area(holder_comb) + self.calculate_combo_area(ch_comb)
-                                        if self.check_total_area_threshold(new_holder_total_area,holder):
-                                            new_ch_total_area = local_total_areas[ch_holder] - self.calculate_combo_area(ch_comb) + self.calculate_combo_area(holder_comb)
-                                            if self.check_total_area_threshold(new_ch_total_area, ch_holder):
-                                                local_measure = sum([self.calculate_composite_number(seed, temp_id) for temp_id in holder_comb])
-                                                if not measure:
-                                                    change_holder = ch_holder
-                                                    temp_holder_combo = holder_comb
-                                                    temp_ch_combo = ch_comb
-                                                    measure = local_measure
-                                                    temp_holder_total_area = new_holder_total_area
-                                                    temp_ch_total_area = new_ch_total_area
-                                                else:
-                                                    if measure < local_measure:
+                                if len(holder_combinations) > 0 and len(ch_combinations) > 0:
+                                    for turn, holder_comb in enumerate(holder_combinations):
+                                        for turnn, ch_comb in enumerate(ch_combinations):
+                                            new_holder_total_area = holder_total_area - self.calculate_combo_area(holder_comb) + self.calculate_combo_area(ch_comb)
+                                            if self.check_total_area_threshold(new_holder_total_area, holder):
+                                                new_ch_total_area = local_total_areas[ch_holder] - self.calculate_combo_area(ch_comb) + self.calculate_combo_area(holder_comb)
+                                                if self.check_total_area_threshold(new_ch_total_area, ch_holder):
+                                                    local_measure = sum([self.calculate_composite_number(seed, temp_id) for temp_id in holder_comb])
+                                                    if not measure:
                                                         change_holder = ch_holder
                                                         temp_holder_combo = holder_comb
                                                         temp_ch_combo = ch_comb
                                                         measure = local_measure
                                                         temp_holder_total_area = new_holder_total_area
                                                         temp_ch_total_area = new_ch_total_area
+                                                    else:
+                                                        if measure < local_measure:
+                                                            change_holder = ch_holder
+                                                            temp_holder_combo = holder_comb
+                                                            temp_ch_combo = ch_comb
+                                                            measure = local_measure
+                                                            temp_holder_total_area = new_holder_total_area
+                                                            temp_ch_total_area = new_ch_total_area
                             if measure:
                                 if len(temp_holder_combo) > 1 and len(temp_ch_combo) > 1:
                                     #many to many change
@@ -942,25 +951,17 @@ class Polygon_grouper(QgsProcessingAlgorithm):
                 if feedback.isCanceled():
                     self.end_logging() 
                     return {}
-            if turner <= 10:
-                feedback.setCurrentStep(1+turner)
+
             if feedback.isCanceled():
                 self.end_logging() 
                 return {}
             if turner == 1:
                 changes = copy.deepcopy(self.counter)
+                #self.filter_touching_features(layer) 
                 logging.debug(f'Changes in turn {turner}: {self.counter}')
-            #elif turner == 20:
-            #    changer = False
-            #    layer.startEditing()
-            #    indexes = []
-            #    indexes.append(layer.fields().indexFromName(self.nid_attribute))
-            #    indexes.append(layer.fields().indexFromName(self.nholder_attribute))
-            #    layer.deleteAttributes(indexes)
-            #    layer.updateFields()
             else:
                 logging.debug(f'Changes in turn {turner}: {self.counter - changes}')
-                if changes == self.counter:
+                if changes == self.counter or abs(self.counter - changes) < int(layer.featureCount()*0.01) or turner == self.steps-2:
                     changer = False
                     layer.startEditing()
                     indexes = []
@@ -969,10 +970,9 @@ class Polygon_grouper(QgsProcessingAlgorithm):
                     layer.deleteAttributes(indexes)
                     layer.updateFields()
                 else:
+                    feedback.setCurrentStep(1+turner)
                     changes = copy.deepcopy(self.counter)
-                    self.filter_touching_features(layer) 
-            #with open(path_profiling, 'a') as stream:
-            #    profile.print_stats(stream=stream)
+                    #self.filter_touching_features(layer) 
 
         return layer
 
@@ -1042,13 +1042,27 @@ class Polygon_grouper(QgsProcessingAlgorithm):
         distance_matrix = {}
         names = self.get_attributes_names(matrix)
         for feature in matrix.getFeatures():
-            temp_list = {}
+            temp_dict = {}
             for field in names:
                 value = feature.attribute(field)
-                temp_list[field] = value
-            distance_matrix[feature.attribute('ID')] = temp_list
+                temp_dict[field] = value
+            distance_matrix[feature.attribute('ID')] = temp_dict
 
         return distance_matrix, names
+
+    def filter_distance_matrix(self):
+        filtered_matrix = {}
+        for key, value in self.distance_matrix.items():
+            sorted_distances = [(y, x) for y, x in zip(list(value.values()), list(value.keys())) if x != 'ID']
+            sorted_distances.sort()
+            sub_filtered_matrix = {}
+            for value_2, key_2 in sorted_distances:
+                if value_2 <= self.distance:
+                    sub_filtered_matrix[key_2] = value_2
+                else:
+                    break
+            filtered_matrix[key] = sub_filtered_matrix
+        return filtered_matrix
 
     def create_merge_feature(self, layer, features_id):
         feats = [feat for feat in layer.getFeatures()]
@@ -1070,26 +1084,18 @@ class Polygon_grouper(QgsProcessingAlgorithm):
         lyr.dataProvider().addFeatures([geom])
         return lyr
 
-    #@profile
     def check_total_area_threshold(self, total_area, holder):
         minimal_bound = self.holder_total_area[holder] - (self.holder_total_area[holder] * (self.tolerance / 100))
         maximal_bound = self.holder_total_area[holder] + (self.holder_total_area[holder] * (self.tolerance / 100))
         if total_area >= minimal_bound and total_area <= maximal_bound:
-            #with open(path_profiling, 'a') as stream:
-            #    profile.print_stats(stream=stream)
             return True
         else:
-            #with open(path_profiling, 'a') as stream:
-            #    profile.print_stats(stream=stream)
             return False
 
-    #@profile
     def calculate_combo_area(self, combo):
         temp_area = 0
         for comb in combo:
             temp_area += self.hol_w_aea[comb]
-        #with open(path_profiling, 'a') as stream:
-        #    profile.print_stats(stream=stream)
         return temp_area
 
     def is_closer(self, threshold_distance, ids, seed):
@@ -1108,12 +1114,9 @@ class Polygon_grouper(QgsProcessingAlgorithm):
                 max_distance = distance
         return max_distance
 
-    #@profile
     def calculate_composite_number(self, seed, id):
         area = self.hol_w_aea[id]
         distance = self.distance_matrix[seed][id]
-        #with open(path_profiling, 'a') as stream:
-        #    profile.print_stats(stream=stream)
         return area*distance
 
     def filter_touching_features(self, layer):
@@ -1130,27 +1133,28 @@ class Polygon_grouper(QgsProcessingAlgorithm):
         }
         simplied_layer = processing.run("native:multiparttosingleparts", alg_params)['OUTPUT']
 
-        for turn, seed in list(self.seeds.values()):
+        for turn, seed in enumerate(list(self.seeds.values())):
             if turn == 0:
                 expression = f'"{self.id_attribute}" = \'{seed}\''
             else:
                 expression += f'OR "{self.id_attribute}" = \'{seed}\''
         layer.selectByExpression(expression)
 
+        type(simplied_layer)
         alg_params = {
             'INPUT': simplied_layer,
             'PREDICATE':[1],
             'METHOD' : 0,
-            'INTERSECT':QgsProcessingFeatureSourceDefinition(layer, selectedFeaturesOnly=True, featureLimit=-1, geometryCheck=QgsFeatureRequest.GeometryAbortOnInvalid),
+            'INTERSECT':QgsProcessingFeatureSourceDefinition(layer.source(), selectedFeaturesOnly=True, featureLimit=-1, geometryCheck=QgsFeatureRequest.GeometryAbortOnInvalid),
             'OUTPUT': 'TEMPORARY_OUTPUT'
         }
-        processing.run("native:selectbylocation", alg_params)['OUTPUT']
+        seed_mergs = processing.run("native:extractbylocation", alg_params)['OUTPUT']
 
         alg_params = {
             'INPUT': layer,
             'PREDICATE':[6],
             'METHOD' : 0,
-            'INTERSECT':QgsProcessingFeatureSourceDefinition(simplied_layer, selectedFeaturesOnly=True, featureLimit=-1, geometryCheck=QgsFeatureRequest.GeometryAbortOnInvalid),
+            'INTERSECT':seed_mergs,
             'OUTPUT': 'TEMPORARY_OUTPUT'
         }
         processing.run("native:selectbylocation", alg_params)['OUTPUT']
