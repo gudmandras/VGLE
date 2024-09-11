@@ -165,7 +165,7 @@ class Polygon_grouper(QgsProcessingAlgorithm):
             root.insertLayer(0, swaped_layer)
             swaped_layer.commitChanges()
 
-            merged_layer = self.create_merged_file(swaped_layer, parameters["Outputdirectory"],timestamp)
+            merged_layer = self.create_merged_file(swaped_layer, parameters["Outputdirectory"], timestamp)
 
             QgsProject.instance().addMapLayer(merged_layer, False)
             root = QgsProject().instance().layerTreeRoot()
@@ -578,21 +578,6 @@ class Polygon_grouper(QgsProcessingAlgorithm):
                 break
         return search_items
 
-    """
-    def distance_search(self, layer, seed):
-        search_items = []
-        feats = [feat for feat in layer.getFeatures()]
-        expression = f'"{self.id_attribute}" = \'{seed}\''
-        layer.selectByExpression(expression)
-        sel_feat = layer.selectedFeatures()[0]
-        geom_buffer = sel_feat.geometry().buffer(self.distance, -1)
-        for feat in feats:
-            if feat.geometry().intersects(geom_buffer):
-                search_items.append(feat.attribute(self.id_attribute))
-        layer.removeSelection()
-        return search_items
-    """
-
     def ids_for_change(self, holding_list, changables):
         try:
             ids = []
@@ -957,11 +942,11 @@ class Polygon_grouper(QgsProcessingAlgorithm):
                 return {}
             if turner == 1:
                 changes = copy.deepcopy(self.counter)
-                #self.filter_touching_features(layer) 
+                self.filter_touching_features(layer) 
                 logging.debug(f'Changes in turn {turner}: {self.counter}')
             else:
                 logging.debug(f'Changes in turn {turner}: {self.counter - changes}')
-                if changes == self.counter or abs(self.counter - changes) < int(layer.featureCount()*0.01) or turner == self.steps-2:
+                if changes == self.counter or abs(self.counter - changes) < int(layer.featureCount()*0.01):
                     changer = False
                     layer.startEditing()
                     indexes = []
@@ -969,10 +954,12 @@ class Polygon_grouper(QgsProcessingAlgorithm):
                     indexes.append(layer.fields().indexFromName(self.nholder_attribute))
                     layer.deleteAttributes(indexes)
                     layer.updateFields()
+                elif turner == self.steps-2:
+                    changer = False
                 else:
                     feedback.setCurrentStep(1+turner)
                     changes = copy.deepcopy(self.counter)
-                    #self.filter_touching_features(layer) 
+                    self.filter_touching_features(layer) 
 
         return layer
 
@@ -1164,7 +1151,17 @@ class Polygon_grouper(QgsProcessingAlgorithm):
             self.changables.pop(self.changables.index(id_value))
 
     def create_merged_file(self, layer, directory, timestamp):
-        attribute_name = str(int(self.nholder_attribute.split('_')[0])-1) + self.nholder_attribute[1:]
+        last_nholder_attribute = int(self.nholder_attribute.split('_')[0])
+        if last_nholder_attribute == self.steps-2:
+            if self.steps-2 >= 10:
+                attribute_name = str(last_nholder_attribute) + self.nholder_attribute[2:]
+            else:
+                attribute_name = str(last_nholder_attribute) + self.nholder_attribute[1:]
+        else:
+            if last_nholder_attribute >= 10:
+                attribute_name = str(last_nholder_attribute-1) + self.nholder_attribute[2:]
+            else:
+                attribute_name = str(last_nholder_attribute-1) + self.nholder_attribute[1:]
         alg_params =  {
         'INPUT':layer,
         'FIELD':[attribute_name],
