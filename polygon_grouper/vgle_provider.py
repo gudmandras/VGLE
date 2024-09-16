@@ -28,8 +28,8 @@ class Polygon_grouperProvider(QgsProcessingProvider):
         """
         Loads all algorithms belonging to this provider.
         """
-        import ptvsd
-        ptvsd.debug_this_thread()
+        #import ptvsd
+        #ptvsd.debug_this_thread()
         self.addAlgorithm(Polygon_grouper())
         # add additional algorithms here
         # self.addAlgorithm(MyOtherAlgorithm())

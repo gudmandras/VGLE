@@ -36,8 +36,8 @@ import time, copy, uuid, logging, itertools
 class Polygon_grouper(QgsProcessingAlgorithm):
 
     def initAlgorithm(self, config=None):
-        import ptvsd
-        ptvsd.debug_this_thread()
+        #import ptvsd
+        #ptvsd.debug_this_thread()
         self.addParameter(QgsProcessingParameterVectorLayer('Inputlayer', 'Input layer', types=[QgsProcessing.TypeVectorPolygon], defaultValue=None))
         self.addParameter(QgsProcessingParameterBoolean('Preference', 'Give preference for the selected features', defaultValue=False))
         self.addParameter(QgsProcessingParameterBoolean('Onlyselected', 'Only use the selected features', defaultValue=False))
@@ -46,7 +46,7 @@ class Polygon_grouper(QgsProcessingAlgorithm):
         self.addParameter(QgsProcessingParameterField('Balancedbyfield', 'Balanced by field', type=QgsProcessingParameterField.Numeric, parentLayerParameterName='Inputlayer', allowMultiple=False, defaultValue=''))
         self.addParameter(QgsProcessingParameterNumber('Tolerance', 'Tolerance (%)', type=QgsProcessingParameterNumber.Integer, minValue=5, maxValue=100, defaultValue=5))
         self.addParameter(QgsProcessingParameterNumber('Distancetreshold', 'Distance treshold (m)', type=QgsProcessingParameterNumber.Integer, minValue=0, defaultValue=1000))
-        self.addParameter(QgsProcessingParameterEnum('Swaptoget', 'Swap to get', options=['Neighbours','Closer','Neighbours, than closer','Closer, than negihbours'], allowMultiple=False, defaultValue='Neighbours'))
+        self.addParameter(QgsProcessingParameterEnum('Swaptoget', 'Swap to get', options=['Neighbours','Closer','Neighbours, than closer','Closer, than neighbours'], allowMultiple=False, defaultValue='Neighbours'))
         self.addParameter(QgsProcessingParameterFile('Outputdirectory', 'Output directory', behavior=QgsProcessingParameterFile.Folder, fileFilter='Minden fájl (*.*)', defaultValue=None))
         self.algorithm_names = ['Neighbours', 'Closer', "Neighbours, then closer", "Closer, then neighbours"]
 
@@ -99,14 +99,14 @@ class Polygon_grouper(QgsProcessingAlgorithm):
     def processAlgorithm(self, parameters, context, model_feedback):
         # Use a multi-step feedback, so that individual child algorithm progress reports are adjusted for the
         # overall progress through the model
-        import ptvsd
-        ptvsd.debug_this_thread()
+        #import ptvsd
+        #ptvsd.debug_this_thread()
 
         if parameters['Onlyselected'] and parameters['Preference'] is not True:
             qgis.utils.iface.messageBar().pushMessage("'Only use the selected features' parameters works only with 'Give preference for the selected features parameter'. This parameter is invalided", level=Qgis.Critical, duration=30)
             feedback.pushInfo(f"'Only use the selected features' parameters works only with 'Give preference for the selected features parameter'. This parameter is invalided") 
 
-        self.steps = self.calculate_steps([parameters['Swaptoget']])
+        self.steps = self.calculate_steps(parameters['Swaptoget'])
         feedback = QgsProcessingMultiStepFeedback(self.steps, model_feedback)
         timestamp = datetime.fromtimestamp(time.time()).strftime("%d_%m_%Y_%H_%M_%S")
         results = {}
@@ -119,14 +119,14 @@ class Polygon_grouper(QgsProcessingAlgorithm):
         self.tolerance = parameters['Tolerance']
         self.distance = parameters['Distancetreshold']
         self.use_single = parameters['Single']
-        algorithm_index = parameters['Swaptoget']
-        algorithm_name = self.algorithm_names[algorithm_index].lower()
+        self.algorithm_index = parameters['Swaptoget']
+        self.algorithm_name = self.algorithm_names[self.algorithm_index].lower()
 
         input_layer = self.parameterAsVectorLayer(parameters, 'Inputlayer', context)
        
         self.start_logging(input_layer, parameters, timestamp)
 
-        temp_layer = self.create_temp_layer(input_layer, parameters["Outputdirectory"], algorithm_name, timestamp)
+        temp_layer = self.create_temp_layer(input_layer, parameters["Outputdirectory"], self.algorithm_name, timestamp)
         swaped_layer = None
         merged_layer = None
 
@@ -155,28 +155,28 @@ class Polygon_grouper(QgsProcessingAlgorithm):
             return {}
         feedback.pushInfo('Distance matrix calculated')
 
-        if algorithm_index == 0:
+        if self.algorithm_index == 0:
             #swaped_layer = self.swap_iteration(layer, feedback)
             swaped_layer = self.neighbours(layer, feedback)
-        elif algorithm_index == 1:
+        elif self.algorithm_index == 1:
             one_seed_bool = self.check_seed_number(feedback)
             if one_seed_bool:
                 swaped_layer = self.closer(layer, feedback)
             else:
                 swaped_layer = False
-        elif algorithm_index == 2:
+        elif self.algorithm_index == 2:
             one_seed_bool = self.check_seed_number(feedback)
             if one_seed_bool:
                 original_seeds = copy.deepcopy(self.seeds)
-                swaped_layer = self.swap_iteration(layer, feedback)
+                swaped_layer = self.neighbours(layer, feedback)
                 swaped_layer = self.closer(swaped_layer, feedback, original_seeds)
             else:
                 swaped_layer = False
-        elif algorithm_index == 3:
+        elif self.algorithm_index == 3:
             one_seed_bool = self.check_seed_number(feedback)
             if one_seed_bool:
                 swaped_layer = self.closer(layer, feedback)
-                swaped_layer = self.swap_iteration(swaped_layer, feedback)
+                swaped_layer = self.neighbours(swaped_layer, feedback)
             else:
                 swaped_layer = False
         
@@ -483,54 +483,6 @@ class Polygon_grouper(QgsProcessingAlgorithm):
         
         self.seeds = holders_with_seeds
 
-    def swap_iteration(self, layer, feedback):
-        self.counter = 0
-        changes = 1
-        changer = True
-        try:
-            turn = int(self.nholder_attribute.split('_')[0])
-            if turn >= 10:
-                self.nholder_attribute = str(int(self.nholder_attribute.split('_')[0])-1) + self.nholder_attribute[2:]
-                self.nid_attribute = str(int(self.nid_attribute.split('_')[0])-1) + self.nid_attribute[2:]
-            else:
-                self.nholder_attribute = str(int(self.nholder_attribute.split('_')[0])-1) + self.nholder_attribute[1:]
-                self.nid_attribute = str(int(self.nid_attribute.split('_')[0])-1) + self.nid_attribute[1:]
-        except AttributeError:
-            turn = 0
-        self.global_changables = self.get_changable_holdings()
-        local_total_areas = copy.deepcopy(self.holder_total_area)
-        feedback.pushInfo(f'Neighbours algorithm start') 
-        while changer:
-            turn += 1
-            layer, local_total_areas, local_changables = self.swap(layer, local_total_areas, feedback, turn)
-            if layer and local_total_areas and local_changables:
-                if turn == 1:
-                    changes = copy.deepcopy(self.counter)
-                    feedback.pushInfo(f'Changes in turn {turn}: {self.counter}') 
-                    logging.debug(f'Changes in turn {turn}: {self.counter}')
-                    if turn <= 5:
-                        feedback.setCurrentStep(1 + turn)
-                else:
-                    logging.debug(f'Changes in turn {turn}: {self.counter-changes}')
-                    feedback.pushInfo(f'Changes in turn {turn}: {self.counter-changes}')
-                    if changes == self.counter or abs(self.counter - changes) < int(layer.featureCount()*0.01) or turn == self.steps-2:
-                        changer = False
-                        layer.startEditing()
-                        indexes = []
-                        indexes.append(layer.fields().indexFromName(self.nid_attribute))
-                        indexes.append(layer.fields().indexFromName(self.nholder_attribute))
-                        layer.deleteAttributes(indexes)
-                        layer.updateFields()
-                        layer.commitChanges(False)
-                    else:
-                        changes = copy.deepcopy(self.counter)
-                    if turn <= self.steps-2:
-                        feedback.setCurrentStep(1 + turn)
-            feedback.pushInfo(f'Save turn results to the file')
-            if feedback.isCanceled():
-                return {}
-        return layer
-
     def get_changable_holdings(self, in_distance=None):
         changable_holdings = []
         if in_distance:
@@ -544,38 +496,6 @@ class Polygon_grouper(QgsProcessingAlgorithm):
                     if holding not in self.seeds[holder]:
                         changable_holdings.append(holding)
         return changable_holdings
-
-    def swap(self, layer, total_areas, feedback, turn=1):
-        layer = self.set_turn_attributes(layer, turn)
-        changables = []
-        for holder, holdings in self.hol_w_hol.items():
-            if holder != 'NULL':
-                seeds = self.seeds[holder]
-                if len(seeds) == 1:
-                    ngh_ids, neighbours = self.get_neighbours(layer, seeds[0])
-                    #in_distance = self.distance_search(seeds[0])
-                    in_distance = self.filtered_distances[seeds[0]]
-                    distance_changes = self.get_changable_holdings(in_distance)
-                    local_changables = [dist for dist in distance_changes if dist in self.global_changables and dist not in changables]
-                    if len(local_changables) > 0:
-                        layer, change_ids, total_areas = self.search_for_changes(layer, seeds[0], local_changables, ngh_ids, neighbours, total_areas, holder, holdings, feedback)
-                        changables.extend(change_ids)
-                elif len(seeds) == 0:
-                    continue
-                else:
-                    for seed in seeds:
-                        ngh_ids, neighbours = self.get_neighbours(layer, seed)
-                        #in_distance = self.distance_search(seed)
-                        in_distance = self.filtered_distances[seeds[0]]
-                        distance_changes = self.get_changable_holdings(in_distance)
-                        local_changables = [dist for dist in distance_changes if dist in self.global_changables and dist not in changables]
-                        if len(local_changables) > 0:
-                            layer, change_ids, total_areas = self.search_for_changes(layer, seed, local_changables, ngh_ids, neighbours, total_areas, holder, holdings, feedback)
-                            changables.extend(change_ids)
-            if feedback.isCanceled():
-                self.end_logging() 
-                return None, None, None
-        return layer, total_areas, changables
 
     def get_neighbours(self, layer, seed):
         expression = f'"{self.id_attribute}" = \'{seed}\''
@@ -621,170 +541,6 @@ class Polygon_grouper(QgsProcessingAlgorithm):
         except ValueError:
             return None
 
-    def search_for_changes(self, layer, seed, changables, ngh_ids, neighbours, total_areas, holder, holdings, feedback):
-        #Filter out nghs
-        holdings_ids = []
-        changes_ids = []
-        for h_id in holdings:
-            if h_id in ngh_ids:
-                if h_id not in self.seeds[holder]:
-                    self.seeds[holder].append(h_id)
-            else:
-                holdings_ids.append(h_id)
-
-        ngh_features = neighbours.getFeatures()
-        for nghfeat in ngh_features:
-            # Get holder total area
-            holder_total_area = total_areas[holder]
-            #Filter holdings
-            filtered_holdings_ids = self.ids_for_change(holdings_ids, changables)
-            if holdings_ids:
-                # Get ngh holder name
-                ngh_holder = nghfeat.attribute(self.nholder_attribute)
-                if ngh_holder != 'NULL' and ngh_holder != holder:
-                    # Get holder total area
-                    ngh_holder_total_area = total_areas[ngh_holder]
-                    # Get holders holdings
-                    ngh_holdings = self.hol_w_hol[ngh_holder]
-                    # Filter holdings
-                    ngh_holdings_ids = self.ids_for_change(ngh_holdings, changables)
-                    if ngh_holdings_ids:
-                        # Filter out nghs
-                        filtered_ngh_holdings_ids = [h_id for h_id in ngh_holdings_ids if h_id not in ngh_ids]
-
-                        ngh_feat_id = nghfeat.attribute(self.id_attribute)
-                        if ngh_feat_id in changables:
-                            filtered_ngh_holdings_ids.append(ngh_feat_id)
-
-                            holder_combinations = []
-                            for L in range(len(filtered_holdings_ids) + 1):
-                                for subset in itertools.combinations(filtered_holdings_ids, L):
-                                    if len(subset) >= 1 and subset not in holder_combinations and len(subset) <= 10:
-                                        holder_combinations.append(subset)
-
-                            ngh_combinations = []
-                            for L in range(len(filtered_ngh_holdings_ids) + 1):
-                                for subset in itertools.combinations(filtered_ngh_holdings_ids, L):
-                                    if len(subset) >= 1 and  ngh_feat_id in subset and subset not in ngh_combinations and len(subset) <= 10:
-                                        ngh_combinations.append(subset)
-
-                            holder_comb_totals = []
-                            for comb in holder_combinations:
-                                temp_area = self.calculate_combo_area(comb)
-                                holder_comb_totals.append(temp_area)
-
-                            ngh_holder_comb_totals = []
-                            for comb in ngh_combinations:
-                                temp_area = self.calculate_combo_area(comb)
-                                ngh_holder_comb_totals.append(temp_area)
-
-                            total_areas_difference = []
-                            holder_new_total_areas = []
-                            ngh_new_total_areas = []
-                            possible_holder_changes = []
-                            possible_ngh_changes = []
-                            for holder_comb in holder_comb_totals:
-                                for ngh_comb in ngh_holder_comb_totals:
-                                    new_holder_total_area = holder_total_area - holder_comb + ngh_comb
-                                    if self.check_total_area_threshold(new_holder_total_area, holder):
-                                        new_ngh_total_area = ngh_holder_total_area - ngh_comb + holder_comb
-                                        if self.check_total_area_threshold(new_ngh_total_area, ngh_holder):
-                                            total_areas_difference.append(new_holder_total_area-holder_total_area)
-                                            holder_new_total_areas.append(new_holder_total_area)
-                                            ngh_new_total_areas.append(new_ngh_total_area)
-                                            possible_holder_changes.append(holder_combinations[holder_comb_totals.index(holder_comb)])
-                                            possible_ngh_changes.append(ngh_combinations[ngh_holder_comb_totals.index(ngh_comb)])
-                            if possible_holder_changes:
-                                indexer = total_areas_difference.index(min(total_areas_difference))
-                                smallest = possible_holder_changes[indexer]
-                                ngh_cmbs = possible_ngh_changes[indexer]
-                                if len(smallest) > 1 and len(ngh_cmbs) > 1:
-                                    #many to many change
-                                    commitMessage = f'Change {str(self.counter)} for {ngh_feat_id} (holder:{ngh_holder}) as neighbour of {seed} (holder:{holder}): {smallest} for {ngh_cmbs}'
-                                    logging.debug(commitMessage)
-                                    feedback.pushInfo(commitMessage)
-                                    for hold in smallest:
-                                        self.set_new_attribute(layer, hold, ','.join(ngh_cmbs), self.nid_attribute)
-                                        self.set_new_attribute(layer, hold, ngh_holder, self.nholder_attribute)
-                                        changables.pop(changables.index(hold))
-                                        changes_ids.append(hold)
-                                        self.hol_w_hol[holder].pop(self.hol_w_hol[holder].index(hold))
-                                        self.hol_w_hol[ngh_holder].append(hold)
-                                    for ngh in ngh_cmbs:
-                                        self.set_new_attribute(layer, ngh, ','.join(smallest), self.nid_attribute)
-                                        self.set_new_attribute(layer, ngh, holder, self.nholder_attribute)
-                                        changables.pop(changables.index(ngh))
-                                        changes_ids.append(ngh)
-                                        self.hol_w_hol[ngh_holder].pop(self.hol_w_hol[ngh_holder].index(ngh))
-                                        self.hol_w_hol[holder].append(ngh)
-                                    self.global_changables.pop(self.global_changables.index(ngh_feat_id))
-                                    self.seeds[holder].append(ngh_feat_id)
-                                    total_areas[holder] = holder_new_total_areas[total_areas_difference.index(min(total_areas_difference))]
-                                    total_areas[ngh_holder] = ngh_new_total_areas[total_areas_difference.index(min(total_areas_difference))]
-                                    self.counter += 1
-                                elif len(smallest) > 1 and len(ngh_cmbs) == 1 or len(smallest) == 1 and len(ngh_cmbs) > 1:
-                                    #many to one change
-                                    commitMessage = f'Change {str(self.counter)} for {ngh_feat_id} (holder:{ngh_holder}) as neighbour of {seed} (holder:{holder}): {smallest} for {ngh_cmbs}'
-                                    logging.debug(commitMessage)
-                                    feedback.pushInfo(commitMessage)
-                                    if len(smallest) > 1:
-                                        for hold in smallest:
-                                            self.set_new_attribute(layer, hold, ngh_cmbs[0], self.nid_attribute)
-                                            self.set_new_attribute(layer, hold, ngh_holder, self.nholder_attribute)
-                                            changables.pop(changables.index(hold))
-                                            changes_ids.append(hold)
-                                            self.hol_w_hol[holder].pop(self.hol_w_hol[holder].index(hold))
-                                            self.hol_w_hol[ngh_holder].append(hold)
-                                        self.set_new_attribute(layer, ngh_feat_id, ','.join(smallest), self.nid_attribute)
-                                        self.set_new_attribute(layer, ngh_feat_id, holder, self.nholder_attribute)
-                                        changables.pop(changables.index(ngh_feat_id))
-                                        changes_ids.append(ngh_feat_id)
-                                        self.hol_w_hol[ngh_holder].pop(self.hol_w_hol[ngh_holder].index(ngh_feat_id))
-                                        self.hol_w_hol[holder].append(ngh_feat_id)
-                                    else:
-                                        for ngh in ngh_cmbs:
-                                            self.set_new_attribute(layer, ngh, smallest[0], self.nid_attribute)
-                                            self.set_new_attribute(layer, ngh, holder, self.nholder_attribute)
-                                            changables.pop(changables.index(ngh))
-                                            changes_ids.append(ngh)
-                                            self.hol_w_hol[ngh_holder].pop(self.hol_w_hol[ngh_holder].index(ngh))
-                                            self.hol_w_hol[holder].append(ngh)
-                                        self.set_new_attribute(layer, smallest[0], ','.join(ngh_cmbs), self.nid_attribute)
-                                        self.set_new_attribute(layer, smallest[0], ngh_holder, self.nholder_attribute)
-                                        changables.pop(changables.index(smallest[0]))
-                                        changes_ids.append(smallest[0])
-                                        self.hol_w_hol[holder].pop(self.hol_w_hol[holder].index(smallest[0]))
-                                        self.hol_w_hol[ngh_holder].append(smallest[0])
-                                    self.global_changables.pop(self.global_changables.index(ngh_feat_id))
-                                    self.seeds[holder].append(ngh_feat_id)
-                                    total_areas[holder] = holder_new_total_areas[total_areas_difference.index(min(total_areas_difference))]
-                                    total_areas[ngh_holder] = ngh_new_total_areas[total_areas_difference.index(min(total_areas_difference))]
-                                    self.counter += 1
-                                else:
-                                    #one to one change
-                                    commitMessage = f'Change {str(self.counter)} for {ngh_feat_id} (holder:{ngh_holder}) as neighbour of {seed} (holder:{holder}): {smallest} for {ngh_cmbs}'
-                                    logging.debug(commitMessage)
-                                    feedback.pushInfo(commitMessage)
-                                    self.set_new_attribute(layer, smallest[0], ngh_feat_id, self.nid_attribute)
-                                    self.set_new_attribute(layer, smallest[0], ngh_holder, self.nholder_attribute)
-                                    self.set_new_attribute(layer, ngh_feat_id, smallest[0], self.nid_attribute)
-                                    self.set_new_attribute(layer, ngh_feat_id, holder, self.nholder_attribute)
-                                    changables.pop(changables.index(ngh_feat_id))
-                                    changables.pop(changables.index(smallest[0]))
-                                    changes_ids.append(smallest[0])
-                                    changes_ids.append(ngh_feat_id)
-                                    self.hol_w_hol[ngh_holder].pop(self.hol_w_hol[ngh_holder].index(ngh_feat_id))
-                                    self.hol_w_hol[holder].append(ngh_feat_id)
-                                    self.hol_w_hol[holder].pop(self.hol_w_hol[holder].index(smallest[0]))
-                                    self.hol_w_hol[ngh_holder].append(smallest[0])
-                                    self.global_changables.pop(self.global_changables.index(ngh_feat_id))
-                                    self.seeds[holder].append(ngh_feat_id)
-                                    total_areas[holder] = holder_new_total_areas[total_areas_difference.index(min(total_areas_difference))]
-                                    total_areas[ngh_holder] = ngh_new_total_areas[total_areas_difference.index(min(total_areas_difference))]
-                                    self.counter += 1
-
-        return layer, changes_ids, total_areas
-    
     def neighbours(self, layer, feedback):
         self.counter = 0
         changes = 1
@@ -793,12 +549,17 @@ class Polygon_grouper(QgsProcessingAlgorithm):
 
         try:
             turn = int(self.nholder_attribute.split('_')[0])
-            if turn >= 10:
-                self.nholder_attribute = str(int(self.nholder_attribute.split('_')[0])-1) + self.nholder_attribute[2:]
-                self.nid_attribute = str(int(self.nid_attribute.split('_')[0])-1) + self.nid_attribute[2:]
-            else:
-                self.nholder_attribute = str(int(self.nholder_attribute.split('_')[0])-1) + self.nholder_attribute[1:]
-                self.nid_attribute = str(int(self.nid_attribute.split('_')[0])-1) + self.nid_attribute[1:]
+            if self.algorithm_index == 3:
+                if turn == (self.steps/2)-3:
+                    self.nholder_attribute = str(int(self.nholder_attribute.split('_')[0])) + self.nholder_attribute[2:]
+                    self.nid_attribute = str(int(self.nid_attribute.split('_')[0])) + self.nid_attribute[2:]
+                else:
+                    if turn >= 10:
+                        self.nholder_attribute = str(int(self.nholder_attribute.split('_')[0])-1) + self.nholder_attribute[2:]
+                        self.nid_attribute = str(int(self.nid_attribute.split('_')[0])-1) + self.nid_attribute[2:]
+                    else:
+                        self.nholder_attribute = str(int(self.nholder_attribute.split('_')[0])-1) + self.nholder_attribute[1:]
+                        self.nid_attribute = str(int(self.nid_attribute.split('_')[0])-1) + self.nid_attribute[1:]
         except AttributeError:
             turn = 0
 
@@ -999,8 +760,12 @@ class Polygon_grouper(QgsProcessingAlgorithm):
                     indexes.append(layer.fields().indexFromName(self.nholder_attribute))
                     layer.deleteAttributes(indexes)
                     layer.updateFields()
-                elif turn == self.steps-2:
-                    changer = False
+                elif self.algorithm_index == 0 or  self.algorithm_index == 3:
+                    if turn == self.steps-3:
+                        changer = False
+                elif self.algorithm_index == 2:
+                    if turn == (self.steps/2)-3:
+                        changer = False
                 else:
                     changes = copy.deepcopy(self.counter)
             feedback.setCurrentStep(1 + turn)
@@ -1009,23 +774,27 @@ class Polygon_grouper(QgsProcessingAlgorithm):
                 return {}
         return layer
 
-
     def closer(self, layer, feedback, seeds=None):
         self.counter = 0
         changes = 1
         changer = True
-        self.global_changables = self.get_changable_holdings()
 
         if seeds:
             self.seeds = seeds
             turn = int(self.nholder_attribute.split('_')[0])
-            if turn >= 10:
-                self.nholder_attribute = str(int(self.nholder_attribute.split('_')[0])-1) + self.nholder_attribute[2:]
-                self.nid_attribute = str(int(self.nid_attribute.split('_')[0])-1) + self.nid_attribute[2:]
-            else:
-                self.nholder_attribute = str(int(self.nholder_attribute.split('_')[0])-1) + self.nholder_attribute[1:]
-                self.nid_attribute = str(int(self.nid_attribute.split('_')[0])-1) + self.nid_attribute[1:]
+            if self.algorithm_index == 2:
+                if turn == (self.steps/2)-3:
+                    self.nholder_attribute = str(int(self.nholder_attribute.split('_')[0])) + self.nholder_attribute[2:]
+                    self.nid_attribute = str(int(self.nid_attribute.split('_')[0])) + self.nid_attribute[2:]
+                else:
+                    if turn >= 10:
+                        self.nholder_attribute = str(int(self.nholder_attribute.split('_')[0])-1) + self.nholder_attribute[2:]
+                        self.nid_attribute = str(int(self.nid_attribute.split('_')[0])-1) + self.nid_attribute[2:]
+                    else:
+                        self.nholder_attribute = str(int(self.nholder_attribute.split('_')[0])-1) + self.nholder_attribute[1:]
+                        self.nid_attribute = str(int(self.nid_attribute.split('_')[0])-1) + self.nid_attribute[1:]
         else:
+            self.global_changables = self.get_changable_holdings()
             turn = 0
 
         local_total_areas = copy.deepcopy(self.holder_total_area)
@@ -1048,16 +817,18 @@ class Polygon_grouper(QgsProcessingAlgorithm):
                     distance_changes = self.get_changable_holdings(in_distance)
                     filtered_holdings_ids = self.ids_for_change(holdings, distance_changes)
 
-                    #for holding in holdings:
                     filtered_holdings_ids = self.ids_for_change(filtered_holdings_ids, changables)
                     filtered_holdings_ids = self.ids_for_change(filtered_holdings_ids, self.hol_w_hol[holder])
+                    sorted_distances = [(y, x) for y, x in zip(list(in_distance.values()), list(in_distance.keys())) if x in filtered_holdings_ids]
+                    sorted_distances.sort()
+                    filtered_holdings_ids = [key for value, key in sorted_distances[:5]]
+
                     holder_combinations = []
                     for L in range(len(filtered_holdings_ids) + 1):
                         for subset in itertools.combinations(filtered_holdings_ids, L):
                             if len(subset) >= 1 and subset not in holder_combinations and len(subset) <= 10:
                                 holder_combinations.append(subset)
 
-                        #if holding != seed and holding in filtered_holdings_ids:
                     temp_holder_combo = None
                     temp_ch_combo = None
                     temp_holder_total_area = None
@@ -1219,8 +990,14 @@ class Polygon_grouper(QgsProcessingAlgorithm):
                     indexes.append(layer.fields().indexFromName(self.nholder_attribute))
                     layer.deleteAttributes(indexes)
                     layer.updateFields()
-                elif turn == self.steps-2:
-                    changer = False
+                elif self.algorithm_index == 1 or self.algorithm_index == 2:
+                    if turn == self.steps-3:
+                        self.filter_touching_features(layer)
+                        changer = False
+                elif self.algorithm_index == 3:
+                    if turn == (self.steps/2)-3:
+                        self.filter_touching_features(layer)
+                        changer = False
                 else:
                     changes = copy.deepcopy(self.counter)
                     self.filter_touching_features(layer)
@@ -1414,7 +1191,7 @@ class Polygon_grouper(QgsProcessingAlgorithm):
         selfeatures = layer.selectedFeatures()
         for feature in selfeatures:
             id_value = feature.attribute(self.id_attribute)
-            self.changables.pop(self.changables.index(id_value))
+            self.global_changables.pop(self.global_changables.index(id_value))
 
     def create_merged_file(self, layer, directory, timestamp):
         last_nholder_attribute = int(self.nholder_attribute.split('_')[0])
