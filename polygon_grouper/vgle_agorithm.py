@@ -36,8 +36,8 @@ import time, copy, uuid, logging, itertools
 class Polygon_grouper(QgsProcessingAlgorithm):
 
     def initAlgorithm(self, config=None):
-        #import ptvsd
-        #ptvsd.debug_this_thread()
+        import ptvsd
+        ptvsd.debug_this_thread()
         self.addParameter(QgsProcessingParameterVectorLayer('Inputlayer', 'Input layer', types=[QgsProcessing.TypeVectorPolygon], defaultValue=None))
         self.addParameter(QgsProcessingParameterBoolean('Preference', 'Give preference for the selected features', defaultValue=False))
         self.addParameter(QgsProcessingParameterBoolean('Onlyselected', 'Only use the selected features', defaultValue=False))
@@ -99,8 +99,8 @@ class Polygon_grouper(QgsProcessingAlgorithm):
     def processAlgorithm(self, parameters, context, model_feedback):
         # Use a multi-step feedback, so that individual child algorithm progress reports are adjusted for the
         # overall progress through the model
-        #import ptvsd
-        #ptvsd.debug_this_thread()
+        import ptvsd
+        ptvsd.debug_this_thread()
 
         if parameters['Onlyselected'] and parameters['Preference'] is not True:
             qgis.utils.iface.messageBar().pushMessage("'Only use the selected features' parameters works only with 'Give preference for the selected features parameter'. This parameter is invalided", level=Qgis.Critical, duration=30)
@@ -576,7 +576,7 @@ class Polygon_grouper(QgsProcessingAlgorithm):
                     seeds = self.seeds[holder]
                     if len(seeds) >= 1:
                         for seed in seeds:
-                            ngh_ids, neighbours = self.get_neighbours(layer, seed)
+                            ngh_ids, neighbours_layer = self.get_neighbours(layer, seed)
                             in_distance = self.filtered_distances[seed]
                             distance_changes = self.get_changable_holdings(in_distance)
                             local_changables = [dist for dist in distance_changes if dist in self.global_changables and dist not in changables]
@@ -591,7 +591,7 @@ class Polygon_grouper(QgsProcessingAlgorithm):
                                     else:
                                         holdings_ids.append(h_id)
 
-                                ngh_features = neighbours.getFeatures()
+                                ngh_features = neighbours_layer.getFeatures()
                                 for nghfeat in ngh_features:
                                     # Get holder total area
                                     holder_total_area = local_total_areas[holder]
@@ -741,11 +741,15 @@ class Polygon_grouper(QgsProcessingAlgorithm):
                                                             local_total_areas[holder] = holder_new_total_areas[total_areas_difference.index(min(total_areas_difference))]
                                                             local_total_areas[ngh_holder] = ngh_new_total_areas[total_areas_difference.index(min(total_areas_difference))]
                                                             self.counter += 1
-                                                    changables.extend(changes_ids)
+                                changables.extend(changes_ids)
                     elif len(seeds) == 0:
                         continue
 
             if turn == 1:
+                changes = copy.deepcopy(self.counter)
+                feedback.pushInfo(f'Changes in turn {turn}: {self.counter}') 
+                logging.debug(f'Changes in turn {turn}: {self.counter}')
+            elif self.algorithm_index == 3 and changes == 1 and turn <= (self.steps/2)-2:
                 changes = copy.deepcopy(self.counter)
                 feedback.pushInfo(f'Changes in turn {turn}: {self.counter}') 
                 logging.debug(f'Changes in turn {turn}: {self.counter}')
@@ -760,12 +764,10 @@ class Polygon_grouper(QgsProcessingAlgorithm):
                     indexes.append(layer.fields().indexFromName(self.nholder_attribute))
                     layer.deleteAttributes(indexes)
                     layer.updateFields()
-                elif self.algorithm_index == 0 or  self.algorithm_index == 3:
-                    if turn == self.steps-3:
-                        changer = False
-                elif self.algorithm_index == 2:
-                    if turn == (self.steps/2)-3:
-                        changer = False
+                elif (self.algorithm_index == 0 or self.algorithm_index == 3) and (turn == self.steps-3):
+                    changer = False
+                elif self.algorithm_index == 2 and turn == (self.steps/2)-3:
+                    changer = False
                 else:
                     changes = copy.deepcopy(self.counter)
             feedback.setCurrentStep(1 + turn)
@@ -938,7 +940,7 @@ class Polygon_grouper(QgsProcessingAlgorithm):
                                     self.hol_w_hol[change_holder].pop(self.hol_w_hol[change_holder].index(ch))
                                     self.hol_w_hol[holder].append(ch)
                                     changables.pop(changables.index(ch))
-                                self.set_new_attribute(layer, temp_holder_combo[0], holder, self.nholder_attribute)
+                                self.set_new_attribute(layer, temp_holder_combo[0], change_holder, self.nholder_attribute)
                                 self.set_new_attribute(layer, temp_holder_combo[0], ','.join(temp_ch_combo), self.nid_attribute)
                                 self.hol_w_hol[holder].pop(self.hol_w_hol[holder].index(temp_holder_combo[0]))
                                 self.hol_w_hol[change_holder].append(temp_holder_combo[0])
