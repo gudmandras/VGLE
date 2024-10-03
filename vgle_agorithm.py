@@ -31,8 +31,8 @@ import time, copy, uuid, logging, itertools
 class Polygon_grouper(QgsProcessingAlgorithm):
 
     def initAlgorithm(self, config=None):
-        import ptvsd
-        ptvsd.debug_this_thread()
+        #import ptvsd
+        #ptvsd.debug_this_thread()
         self.addParameter(QgsProcessingParameterVectorLayer('Inputlayer', 'Input layer', types=[QgsProcessing.TypeVectorPolygon], defaultValue=None))
         self.addParameter(QgsProcessingParameterBoolean('Preference', 'Give preference for the selected features', defaultValue=False))
         self.addParameter(QgsProcessingParameterBoolean('Onlyselected', 'Only use the selected features', defaultValue=False))
@@ -98,8 +98,8 @@ class Polygon_grouper(QgsProcessingAlgorithm):
     def processAlgorithm(self, parameters, context, model_feedback):
         # Use a multi-step feedback, so that individual child algorithm progress reports are adjusted for the
         # overall progress through the model
-        import ptvsd
-        ptvsd.debug_this_thread()
+        #import ptvsd
+        #ptvsd.debug_this_thread()
         results = {}
         self.steps = self.calculate_steps(parameters['Swaptoget'])
         feedback = QgsProcessingMultiStepFeedback(self.steps, model_feedback)
@@ -602,28 +602,16 @@ class Polygon_grouper(QgsProcessingAlgorithm):
                                                     filtered_ngh_holdings_ids.append(ngh_feat_id)
 
                                                     holder_combinations = []
-                                                    if len(filtered_holdings_ids) + 1 < 2:
-                                                        for L in range(len(filtered_holdings_ids) + 1):
-                                                            for subset in itertools.combinations(filtered_holdings_ids, L):
-                                                                if len(subset) >= 1 and subset not in holder_combinations and len(subset) <= 10:
-                                                                    holder_combinations.append(subset)
-                                                    else:
-                                                        for L in range(2):
-                                                            for subset in itertools.combinations(filtered_holdings_ids, L):
-                                                                if len(subset) >= 1 and subset not in holder_combinations and len(subset) <= 10:
-                                                                    holder_combinations.append(subset)
+                                                    for L in range(len(filtered_holdings_ids) + 1):
+                                                        for subset in itertools.combinations(filtered_holdings_ids, L):
+                                                            if len(subset) >= 1 and subset not in holder_combinations and len(subset) <= 10:
+                                                                holder_combinations.append(subset)
 
                                                     ngh_combinations = []
-                                                    if len(filtered_ngh_holdings_ids) + 1 < 2:
-                                                        for L in range(len(filtered_ngh_holdings_ids) + 1):
-                                                            for subset in itertools.combinations(filtered_ngh_holdings_ids, L):
-                                                                if len(subset) >= 1 and  ngh_feat_id in subset and subset not in ngh_combinations and len(subset) <= 10:
-                                                                    ngh_combinations.append(subset)
-                                                    else:
-                                                        for L in range(2):
-                                                            for subset in itertools.combinations(filtered_ngh_holdings_ids, L):
-                                                                if len(subset) >= 1 and  ngh_feat_id in subset and subset not in ngh_combinations and len(subset) <= 10:
-                                                                    ngh_combinations.append(subset)
+                                                    for L in range(len(filtered_ngh_holdings_ids) + 1):
+                                                        for subset in itertools.combinations(filtered_ngh_holdings_ids, L):
+                                                            if len(subset) >= 1 and  ngh_feat_id in subset and subset not in ngh_combinations and len(subset) <= 10:
+                                                                ngh_combinations.append(subset)
 
                                                     holder_comb_totals = []
                                                     for comb in holder_combinations:
@@ -1051,7 +1039,6 @@ class Polygon_grouper(QgsProcessingAlgorithm):
         self.nholder_attribute = new_holder
         return layer
 
-    """
     def create_distance_matrix(self, layer):
         alg_params = {
         'INPUT':layer,
@@ -1081,66 +1068,6 @@ class Polygon_grouper(QgsProcessingAlgorithm):
             distance_matrix[feature.attribute('ID')] = temp_dict
             calculator += 1
             logging.debug(calculator)
-
-        return distance_matrix, names
-    """
-    def create_distance_matrix(self, layer):
-        max_features = 0
-        feats = [feat for feat in layer.getFeatures()]
-        for seed in self.seeds.values():
-            if type(seed[0]) == str:
-                expression = f'"{self.id_attribute}" = \'{seed[0]}\''
-                layer.selectByExpression(expression)
-                sel_feat = layer.selectedFeatures()[0]
-                geom_buffer = sel_feat.geometry().buffer(self.distance+500, -1)
-                local_max_features = 0
-                for feat in feats:
-                    if feat.geometry().intersects(geom_buffer):
-                        local_max_features += 1
-                if local_max_features > max_features:
-                    max_features = local_max_features
-                layer.removeSelection()
-
-        alg_params = {
-        'INPUT':layer,
-        'ALL_PARTS': False,
-        'OUTPUT':'TEMPORARY_OUTPUT'
-        }
-        centroids = processing.run("native:centroids", alg_params)['OUTPUT']
-        alg_params = {
-        'INPUT':centroids,
-        'INPUT_FIELD': self.id_attribute,
-        'TARGET': centroids,
-        'TARGET_FIELD': self.id_attribute,
-        'MATRIX_TYPE': 0,
-        'NEAREST_POINTS': max_features,
-        'OUTPUT':'TEMPORARY_OUTPUT'
-        }
-        matrix = processing.run("qgis:distancematrix", alg_params)['OUTPUT']
-        distance_matrix = {}
-        names = self.get_attributes_names(matrix)
-        features = matrix.getFeatures()
-        for feature in features:
-            input_id = feature.attribute('InputID')
-            target_id = feature.attribute('TargetID')
-            value = feature.attribute('Distance')
-            if input_id in distance_matrix.keys():
-                distance_matrix[input_id][target_id] = value
-            else:
-                distance_matrix[input_id] = {}
-                distance_matrix[input_id][target_id] = value
-            #calculator += 1
-        """
-        calculator = 0
-        for feature in features:
-            temp_dict = {}
-            for field in names:
-                value = feature.attribute(field)
-                temp_dict[field] = value
-            distance_matrix[feature.attribute('ID')] = temp_dict
-            calculator += 1
-            logging.debug(calculator)
-        """
 
         return distance_matrix, names
 
