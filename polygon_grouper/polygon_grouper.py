@@ -34,23 +34,17 @@ import qgis.core
 # Initialize Qt resources from file resources.py
 from .resources import *
 # Import the code for the dialog
-from qgis.core import QgsProcessingAlgorithm, QgsApplication
+from qgis.core import QgsApplication
 from .vgle_provider import Polygon_grouperProvider
 import os.path
 import processing
-import itertools
-import logging
-from datetime import datetime
-import time, copy, uuid
-
 import sys
 import traceback
 from qgis.core import QgsMessageLog, Qgis
 
-
 MESSAGE_CATEGORY = 'Messages'
 
-
+"""
 def enable_remote_debugging():
     try:
         import ptvsd
@@ -66,7 +60,7 @@ def enable_remote_debugging():
         QgsMessageLog.logMessage(repr(format_exception[0]), MESSAGE_CATEGORY, Qgis.Critical)
         QgsMessageLog.logMessage(repr(format_exception[1]), MESSAGE_CATEGORY, Qgis.Critical)
         QgsMessageLog.logMessage(repr(format_exception[2]), MESSAGE_CATEGORY, Qgis.Critical)
-
+"""
 
 class vgle(object):
     """QGIS Plugin Implementation."""
@@ -80,7 +74,7 @@ class vgle(object):
         :type iface: QgsInterface
         """
         self.provider = None
-        enable_remote_debugging()
+        #enable_remote_debugging()
         # Save reference to the QGIS interface
         self.iface = iface
         # initialize plugin directory
@@ -126,7 +120,7 @@ class vgle(object):
             parent=self.iface.mainWindow())
 
         self.action.triggered.connect(self.run)
-        self.iface.addPluginToMenu(u"&PolygonGrouper", self.action)
+        self.iface.addPluginToVectorMenu(u"&VGLE", self.action)
         self.iface.addToolBarIcon(self.action)
 
         # will be set False in run()
@@ -135,7 +129,7 @@ class vgle(object):
     def unload(self):
         """Removes the plugin menu item and icon from QGIS GUI."""
         QgsApplication.processingRegistry().removeProvider(self.provider)
-        self.iface.removePluginMenu(u"&PolygonGrouper", self.action)
+        self.iface.removePluginVectorMenu(u"&VGLE", self.action)
         self.iface.removeToolBarIcon(self.action)
 
     def run(self):
@@ -145,7 +139,7 @@ class vgle(object):
         # Only create GUI ONCE in callback, so that it will only load when the plugin is started
         if self.first_start == True:
             self.first_start = False
-        import ptvsd
-        ptvsd.debug_this_thread()
+        #import ptvsd
+        #ptvsd.debug_this_thread()
         processing.execAlgorithmDialog("Polygon Grouper:polygon_grouper")
 

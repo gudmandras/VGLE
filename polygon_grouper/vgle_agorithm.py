@@ -3,7 +3,7 @@ __date__ = '2024-09-05'
 __copyright__ = '(C) 2024 by GOPA'
 __revision__ = '$Format:%H$'
 
-from qgis.PyQt.QtCore import QCoreApplication, QSettings, QTranslator, QCoreApplication,  QVariant
+from qgis.PyQt.QtCore import QCoreApplication, QVariant
 from qgis.core import (Qgis,
                         QgsProject,
                         QgsProcessing, 
@@ -15,10 +15,8 @@ from qgis.core import (Qgis,
                         QgsProcessingParameterFile,
                         QgsProcessingParameterEnum,
                         QgsProcessingParameterField,
-                        QgsProcessingParameterFeatureSource,
                         QgsProcessingFeatureSourceDefinition,
                         QgsLayerTree, 
-                        QgsLayerTreeLayer, 
                         QgsField, 
                         QgsVectorFileWriter, 
                         QgsVectorLayer,
@@ -29,15 +27,12 @@ import qgis.core
 import os.path
 from datetime import datetime
 import time, copy, uuid, logging, itertools
-#import line_profiler
-#profile = line_profiler.LineProfiler() 
-#path_profiling = r'd:\Job\GOPA\GIS Data\line_profile.txt'
 
 class Polygon_grouper(QgsProcessingAlgorithm):
 
     def initAlgorithm(self, config=None):
-        import ptvsd
-        ptvsd.debug_this_thread()
+        #import ptvsd
+        #ptvsd.debug_this_thread()
         self.addParameter(QgsProcessingParameterVectorLayer('Inputlayer', 'Input layer', types=[QgsProcessing.TypeVectorPolygon], defaultValue=None))
         self.addParameter(QgsProcessingParameterBoolean('Preference', 'Give preference for the selected features', defaultValue=False))
         self.addParameter(QgsProcessingParameterBoolean('Onlyselected', 'Only use the selected features', defaultValue=False))
@@ -46,7 +41,7 @@ class Polygon_grouper(QgsProcessingAlgorithm):
         self.addParameter(QgsProcessingParameterField('Balancedbyfield', 'Balanced by field', type=QgsProcessingParameterField.Numeric, parentLayerParameterName='Inputlayer', allowMultiple=False, defaultValue=''))
         self.addParameter(QgsProcessingParameterNumber('Tolerance', 'Tolerance (%)', type=QgsProcessingParameterNumber.Integer, minValue=5, maxValue=100, defaultValue=5))
         self.addParameter(QgsProcessingParameterNumber('Distancetreshold', 'Distance treshold (m)', type=QgsProcessingParameterNumber.Integer, minValue=0, defaultValue=1000))
-        self.addParameter(QgsProcessingParameterEnum('Swaptoget', 'Swap to get', options=['Neighbours','Closer','Neighbours, than closer','Closer, than neighbours'], allowMultiple=False, defaultValue='Neighbours'))
+        self.addParameter(QgsProcessingParameterEnum('Swaptoget', 'Swap to get', options=['Neighbours','Closer','Neighbours, then closer','Closer, then neighbours'], allowMultiple=False, defaultValue='Neighbours'))
         self.addParameter(QgsProcessingParameterFile('Outputdirectory', 'Output directory', behavior=QgsProcessingParameterFile.Folder, fileFilter='Minden fájl (*.*)', defaultValue=None))
         self.algorithm_names = ['Neighbours', 'Closer', "Neighbours, then closer", "Closer, then neighbours"]
 
@@ -72,12 +67,12 @@ class Polygon_grouper(QgsProcessingAlgorithm):
         <h3>Input layer</h3>
         <p>Vector layer with polygon geometries.</p>
         <h3>Give preference for the selected features</h3>
-        <p>The selected features in the input layer will be used as origo polygons, and the grouping will be around these features. Without these, the origo polygons are the largest polygons per the assigned by field unique values.  </p>
+        <p>The selected features in the input layer will be used as seed polygons, and the grouping will be around these features. Without these, the seed polygons are the largest polygons per the assigned by field unique values.</p>
         <h3>Only use the selected features</h3>
         <p>Only works, if the "Give preference for the selected features" parameter is True. If checked, only the selected polygons will used, else the selected and the largest polygons together.</p>
         <h3>Use single holding's holders polygons</h3>
-        <p>Use holder's polygons, which have only one polygons.</p>
-        <h3>Assigned by ield</h3>
+        <p>Use holder's polygons, which have only one polygon.</p>
+        <h3>Assigned by field</h3>
         <p>The field which contains holder of different number of features inside the input layer.</p>
         <h3>Balanced by field</h3>
         <p>The value which applied for the assigned by field's unique values polygons. Recommended an area field.</p>
@@ -87,10 +82,14 @@ class Polygon_grouper(QgsProcessingAlgorithm):
         <p>The percent for the balance field.</p>
         <h3>Swap to get</h3>
         <p>The method, with the grouping will be happen.
-        Neighbours: Change he origo polygons neighbours.
-        Closer: Change to get closer the other polygons to the origo polygon.  </p>
+        Neighbours: Change the neighbours of the seed polygons.
+        Closer: Change to get closer the other polygons to the seed polygon.
+        Neighbours, then closer: Combinated run, first Neighbours, than Closer function will be run on the results of the Neighbours.
+        Closer, then neighbours: Combinated run, first Closer, than Neighbours function will be run on the results of the Closer.</p>
         <h3>Output directory</h3>
-        <p>The directory where the outputs will saved.</p>
+        <p>The directory where the outputs will saved. Two output layer will be created, with timestamp in their names:
+        First: Vector layer, with the base layer name + algorithm name + timestamp
+        Second: Merged layer, a dissolved vector layer based on the final state of the grouping. (Because of the dissolving, only the last field is valid in this layer)</p>
         <br></body></html>"""
 
     def createInstance(self):
@@ -99,19 +98,16 @@ class Polygon_grouper(QgsProcessingAlgorithm):
     def processAlgorithm(self, parameters, context, model_feedback):
         # Use a multi-step feedback, so that individual child algorithm progress reports are adjusted for the
         # overall progress through the model
-        import ptvsd
-        ptvsd.debug_this_thread()
-
-        if parameters['Onlyselected'] and parameters['Preference'] is not True:
-            qgis.utils.iface.messageBar().pushMessage("'Only use the selected features' parameters works only with 'Give preference for the selected features parameter'. This parameter is invalided", level=Qgis.Critical, duration=30)
-            feedback.pushInfo(f"'Only use the selected features' parameters works only with 'Give preference for the selected features parameter'. This parameter is invalided") 
-
+        #import ptvsd
+        #ptvsd.debug_this_thread()
+        results = {}
         self.steps = self.calculate_steps(parameters['Swaptoget'])
         feedback = QgsProcessingMultiStepFeedback(self.steps, model_feedback)
-        timestamp = datetime.fromtimestamp(time.time()).strftime("%d_%m_%Y_%H_%M_%S")
-        results = {}
-        outputs = {}
 
+        if parameters['Onlyselected'] and parameters['Preference'] is not True:
+            feedback.pushInfo(f"'Only use the selected features' parameters works only with 'Give preference for the selected features parameter'. This parameter is invalided") 
+        
+        timestamp = datetime.fromtimestamp(time.time()).strftime("%d_%m_%Y_%H_%M_%S")
         main_start_time = time.time()
 
         #Get inputs
@@ -143,20 +139,19 @@ class Polygon_grouper(QgsProcessingAlgorithm):
             selected_features = self.get_selected_features(input_layer)
             self.determine_seed_polygons(layer, parameters['Preference'], parameters['Onlyselected'], selected_features)
         else:
-            self.determine_seed_polygons(layer) 
+            self.determine_seed_polygons(layer)
 
         feedback.pushInfo('Calculate distance matrix')
         self.distance_matrix, attr_names = self.create_distance_matrix(layer)
+        feedback.pushInfo('Distance matrix calculated')
         self.filtered_distances = self.filter_distance_matrix()
 
         feedback.setCurrentStep(1)
         if feedback.isCanceled():
-            self.end_logging()   
+            self.end_logging()
             return {}
-        feedback.pushInfo('Distance matrix calculated')
-
+       
         if self.algorithm_index == 0:
-            #swaped_layer = self.swap_iteration(layer, feedback)
             swaped_layer = self.neighbours(layer, feedback)
         elif self.algorithm_index == 1:
             one_seed_bool = self.check_seed_number(feedback)
@@ -199,6 +194,7 @@ class Polygon_grouper(QgsProcessingAlgorithm):
 
             feedback.setCurrentStep(self.steps)
             self.end_logging()   
+            results['OUTPUT'] = swaped_layer
             return results
         else:
             self.end_logging()   
@@ -208,16 +204,7 @@ class Polygon_grouper(QgsProcessingAlgorithm):
         path = os.path.join(parameters["Outputdirectory"], f"{str(layer.name())}_log_{timestamp}.txt")
         formatter = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
         logging.basicConfig(filename=path, level=logging.DEBUG, format=formatter, filemode='w')
-
-        logging.debug(f'Start time: {datetime.now().strftime("%Y_%m_%d_%H_%M")}')
-        logging.debug(f'Input layer: {parameters["Inputlayer"]}')
-        logging.debug(f'Preference to selected items: {parameters["Preference"]}')
-        logging.debug(f"Use single holding's holders polygons: {parameters['Single']}")
-        logging.debug(f'Holder atrribute(s): {parameters["Assignedbyfield"]}')
-        logging.debug(f'Weight attribute: {parameters["Balancedbyfield"]}')
-        logging.debug(f'Tolerance threshold: {parameters["Tolerance"]}')
-        logging.debug(f'Distance threshold: {parameters["Distancetreshold"]}')
-        logging.debug(f'Output dir: {parameters["Outputdirectory"]}')
+        logging.debug(f'Start time: {datetime.now().strftime("%Y_%m_%d_%H_%M")}\nInput layer: {parameters["Inputlayer"]}\nPreference to selected items: {parameters["Preference"]}\nUse single holdings holders polygons: {parameters["Single"]}\nHolder atrribute(s): {parameters["Assignedbyfield"]}\nWeight attribute: {parameters["Balancedbyfield"]}\nTolerance threshold: {parameters["Tolerance"]}\nDistance threshold: {parameters["Distancetreshold"]}\nOutput dir: {parameters["Outputdirectory"]}')
 
     def end_logging(self):
         logger = logging.getLogger() 
@@ -276,8 +263,7 @@ class Polygon_grouper(QgsProcessingAlgorithm):
     def check_seed_number(self, feedback):
         for seed in self.seeds.values():
             if len(seed) > 1:
-                qgis.utils.iface.messageBar().pushMessage("More than one feature preference for one holder at closer function - algorithm stop", level=Qgis.Critical, duration=30)
-                feedback.pushInfo(f'More than one feature preference for one holder at closer function - algorithm stop') 
+                feedback.pushInfo('More than one feature preference for one holder at closer function - algorithm stop') 
                 return False
         return True
 
@@ -800,7 +786,7 @@ class Polygon_grouper(QgsProcessingAlgorithm):
             turn = 0
 
         local_total_areas = copy.deepcopy(self.holder_total_area)
-        feedback.pushInfo(f'Closer algorithm started')   
+        feedback.pushInfo('Closer algorithm started') 
         while changer:
             turn += 1
             layer = self.set_turn_attributes(layer, turn)
@@ -818,7 +804,6 @@ class Polygon_grouper(QgsProcessingAlgorithm):
                     in_distance = self.filtered_distances[seed]
                     distance_changes = self.get_changable_holdings(in_distance)
                     filtered_holdings_ids = self.ids_for_change(holdings, distance_changes)
-
                     filtered_holdings_ids = self.ids_for_change(filtered_holdings_ids, changables)
                     filtered_holdings_ids = self.ids_for_change(filtered_holdings_ids, self.hol_w_hol[holder])
                     sorted_distances = [(y, x) for y, x in zip(list(in_distance.values()), list(in_distance.keys())) if x in filtered_holdings_ids]
@@ -1073,12 +1058,16 @@ class Polygon_grouper(QgsProcessingAlgorithm):
         matrix = processing.run("qgis:distancematrix", alg_params)['OUTPUT']
         distance_matrix = {}
         names = self.get_attributes_names(matrix)
-        for feature in matrix.getFeatures():
+        features = matrix.getFeatures()
+        calculator = 0
+        for feature in features:
             temp_dict = {}
             for field in names:
                 value = feature.attribute(field)
                 temp_dict[field] = value
             distance_matrix[feature.attribute('ID')] = temp_dict
+            calculator += 1
+            logging.debug(calculator)
 
         return distance_matrix, names
 
@@ -1172,7 +1161,6 @@ class Polygon_grouper(QgsProcessingAlgorithm):
                 expression += f'OR "{self.id_attribute}" = \'{seed}\''
         layer.selectByExpression(expression)
 
-        type(simplied_layer)
         alg_params = {
             'INPUT': simplied_layer,
             'PREDICATE':[1],
