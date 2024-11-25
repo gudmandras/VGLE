@@ -5,11 +5,11 @@ __copyright__ = '(C) 2024 by GOPA'
 __revision__ = '$Format:%H$'
 
 from qgis.core import QgsProcessingProvider
-from .vgle_agorithm import Polygon_grouper
+from .vgle_agorithm import PolygonGrouper
 from qgis.PyQt.QtGui import QIcon
 import os, inspect
 
-class Polygon_grouperProvider(QgsProcessingProvider):
+class PolygonGrouperProvider(QgsProcessingProvider):
 
     def __init__(self):
         """
@@ -30,7 +30,7 @@ class Polygon_grouperProvider(QgsProcessingProvider):
         """
         #import ptvsd
         #ptvsd.debug_this_thread()
-        self.addAlgorithm(Polygon_grouper())
+        self.addAlgorithm(PolygonGrouper())
 
     def id(self):
         """

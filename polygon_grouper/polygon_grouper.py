@@ -35,7 +35,7 @@ import qgis.core
 from .resources import *
 # Import the code for the dialog
 from qgis.core import QgsApplication
-from .vgle_provider import Polygon_grouperProvider
+from .vgle_provider import PolygonGrouperProvider
 import os.path
 import processing
 import sys
@@ -61,6 +61,7 @@ def enable_remote_debugging():
         QgsMessageLog.logMessage(repr(format_exception[1]), MESSAGE_CATEGORY, Qgis.Critical)
         QgsMessageLog.logMessage(repr(format_exception[2]), MESSAGE_CATEGORY, Qgis.Critical)
 """
+
 
 class vgle(object):
     """QGIS Plugin Implementation."""
@@ -108,7 +109,7 @@ class vgle(object):
 
     def initProcessing(self):
         """Init Processing provider for QGIS >= 3.8."""
-        self.provider = Polygon_grouperProvider()
+        self.provider = PolygonGrouperProvider()
         QgsApplication.processingRegistry().addProvider(self.provider)
 
     def initGui(self):
