@@ -127,7 +127,7 @@ class PolygonGrouper(QgsProcessingAlgorithm):
         inputLayer = self.parameterAsVectorLayer(parameters, 'Inputlayer', context)
        
         self.startLogging(inputLayer, parameters, timeStamp)
-
+        #Create work file and get the starting dictionaries
         tempLayer = self.createTempLayer(inputLayer, parameters["OutputDirectory"], self.algorithmNames[self.algorithmIndex].lower(), timeStamp)
         layer, self.holderAttribute = self.setHolderField(tempLayer, parameters["AssignedByField"])
         self.holderAttributeType, self.holderAttributeLenght = self.getFieldProperties(tempLayer, self.holderAttribute)
@@ -154,7 +154,7 @@ class PolygonGrouper(QgsProcessingAlgorithm):
         if feedback.isCanceled():
             self.endLogging()
             return {}
-       
+        #Start one of the functions
         if self.algorithmIndex == 0:
             swapedLayer = self.neighbours(layer, feedback)
         elif self.algorithmIndex == 1:
@@ -178,7 +178,7 @@ class PolygonGrouper(QgsProcessingAlgorithm):
                 swapedLayer = self.neighbours(swapedLayer, feedback)
             else:
                 swapedLayer = False
-        
+        #Save results and create merged file
         if swapedLayer:
             feedback.setCurrentStep(self.steps-1)
 
@@ -205,12 +205,25 @@ class PolygonGrouper(QgsProcessingAlgorithm):
             return {}
 
     def startLogging(self, layer, parameters, timeStamp):
+        """
+        DESCRIPTION: Function to start the logging to a log file
+        INPUTS:
+                layer: QgsVectorLayer
+                parameters: dictionary with the plugin input parameters
+                timeStamp: string with the start time of the plugin
+        OUTPUTS: None
+        """
         path = os.path.join(parameters["OutputDirectory"], f"{str(layer.name())}_log_{timeStamp}.txt")
         formatter = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
         logging.basicConfig(filename=path, level=logging.DEBUG, format=formatter, filemode='w')
         logging.debug(f'Start time: {datetime.now().strftime("%Y_%m_%d_%H_%M")}\nInput layer: {parameters["Inputlayer"]}\nPreference to selected items: {parameters["Preference"]}\nUse single holdings holders polygons: {parameters["Single"]}\nHolder atrribute(s): {parameters["AssignedByField"]}\nWeight attribute: {parameters["BalancedByField"]}\nTolerance threshold: {parameters["Tolerance"]}\nDistance threshold: {parameters["DistanceTreshold"]}\nSimplified run: {parameters["Simplfy"]}\nOutput dir: {parameters["OutputDirectory"]}')
 
     def endLogging(self):
+        """
+        DESCRIPTION: Function to end the logging
+        INPUTS: None
+        OUTPUTS: None
+        """
         logger = logging.getLogger() 
         handlers = logger.handlers[:]
         for handler in handlers:
@@ -219,6 +232,12 @@ class PolygonGrouper(QgsProcessingAlgorithm):
         logging.shutdown()
 
     def calculateSteps(self, algorithmIndex):
+        """
+        DESCRIPTION: Based on the plugin input, give back the number of the algorithm's steps 
+        INPUTS:
+                algorithmIndex: Integer, from the plugin input parameter
+        OUTPUTS: Integer
+        """
         if algorithmIndex == 0:
             return 13
         elif algorithmIndex == 1:
@@ -227,11 +246,24 @@ class PolygonGrouper(QgsProcessingAlgorithm):
             return 28 
 
     def getFieldProperties(self, layer, fieldName):
+        """
+        DESCRIPTION: Give back of a field type and lenght 
+        INPUTS:
+                layer: QgsVectorLayer
+                fieldName: String, name of the field
+        OUTPUTS: ogr type, integer
+        """
         for field in layer.fields():
             if field.name() == fieldName:
                 return field.type(), field.length()
 
     def getSelectedFeatures(self, inputLayer):
+        """
+        DESCRIPTION: Give back the selected features of the layer
+        INPUTS:
+                inputLayer: QgsVectorLayer
+        OUTPUTS: QgsVectorLayer
+        """
         algParams = {
             'INPUT': inputLayer,
             'OUTPUT': 'TEMPORARY_OUTPUT'
@@ -240,6 +272,15 @@ class PolygonGrouper(QgsProcessingAlgorithm):
         return selectedFeatures
 
     def createTempLayer(self, layer, directory, postfix, timeStamp=None):
+        """
+        DESCRIPTION: Create a copy of an input layer
+        INPUTS:
+                layer: QgsVectorLayer
+                directory: String, input parameter, absolute path of the output directory
+                postfix: String, postfix for the file name
+                timeStamp: String, time stamp to burn into file name, optional
+        OUTPUTS: QgsVectorLayer
+        """
         if directory:
             if timeStamp:
                 path = os.path.join(directory, f"{str(layer.name())}_{postfix}_{timeStamp}.shp")
@@ -265,6 +306,12 @@ class PolygonGrouper(QgsProcessingAlgorithm):
             return memoryLayer
 
     def checkSeedNumber(self, feedback):
+        """
+        DESCRIPTION: Check every holder seed polygon number. If the number of the seeds for a holder is greater than one, return false
+        INPUTS:
+                feedback: QgsProcessingMultiStepFeedback
+        OUTPUTS: Boolean
+        """
         for seed in self.seeds.values():
             if len(seed) > 1:
                 feedback.pushInfo('More than one feature preference for one holder at closer function - algorithm stop') 
@@ -272,6 +319,13 @@ class PolygonGrouper(QgsProcessingAlgorithm):
         return True
 
     def setHolderField(self, layer, field):
+        """
+        DESCRIPTION: Create the holder attribute field
+        INPUTS:
+                layer: QgsVectorLayer
+                field: String, field name
+        OUTPUTS: QgsVectorLayer, string
+        """
         if len(field) == 1:
             return layer, field[0]
         else:
@@ -280,6 +334,12 @@ class PolygonGrouper(QgsProcessingAlgorithm):
             return layer, fieldName
 
     def setTempHolderField(self, layer):
+        """
+        DESCRIPTION: Create a new field for the holder
+        INPUTS:
+                layer: QgsVectorLayer
+        OUTPUTS: QgsVectorLayer, String
+        """
         fieldName = 'holder_id'
         layerAttributes = self.getAttributesNames(layer)
         if fieldName in layerAttributes:
@@ -296,10 +356,24 @@ class PolygonGrouper(QgsProcessingAlgorithm):
         return layer, fieldName
 
     def getAttributesNames(self, layer):
+        """
+        DESCRIPTION: Gets the attribute names of a layer
+        INPUTS:
+                layer: QgsVectorLayer
+        OUTPUTS: List
+        """
         attributes = [field.name() for field in layer.fields()]
         return attributes
 
     def setTempHolderValue(self, layer, fieldName, attributes):
+        """
+        DESCRIPTION: Set holder attribute values, if more field has received, create a new field, with a combined Id values
+        INPUTS:
+                layer: QgsVectorLayer
+                fieldName: String, field name
+                attributes: List, name of the attribute field, which hold the holder values
+        OUTPUTS: QgsVectorLayer
+        """
         fieldNameId = [turn for turn, field in enumerate(layer.fields()) if field.name() == fieldName][0]
         allUniqueCombination = []
         features = layer.getFeatures()
@@ -353,6 +427,13 @@ class PolygonGrouper(QgsProcessingAlgorithm):
         return layer
 
     def createIdField(self, layer, holders):
+        """
+        DESCRIPTION: Create a new field for the holding ids
+        INPUTS:
+                layer: QgsVectorLayer
+                holders: Dictionary, key: holders ids, values: List, holdings ids
+        OUTPUTS: QgsVectorLayer, String, Dictionary
+        """
         fieldName = 'temp_id'
         layerAttributes = self.getAttributesNames(layer)
         if fieldName in layerAttributes:
@@ -369,6 +450,14 @@ class PolygonGrouper(QgsProcessingAlgorithm):
         return layer, fieldName, holdersWithHoldingId
 
     def setIdField(self, layer, attribute, holders):
+        """
+        DESCRIPTION: Set the holding Id field
+        INPUTS:
+                layer: QgsVectorLayer
+                attribute: String, name of the Id attribute field
+                holders: Dictionary, key: holders ids, values: List, holdings ids
+        OUTPUTS: QgsVectorLayer, Dictionary
+        """
         attributeId = self.getAttributesNames(layer).index(attribute)
         holdersWithHoldingId = {}
         if (layer.isEditable() == False):
@@ -388,6 +477,12 @@ class PolygonGrouper(QgsProcessingAlgorithm):
         return layer, holdersWithHoldingId
 
     def getHoldersHoldings(self, layer):
+        """
+        DESCRIPTION: Create a dictionary for holder and their holdings
+        INPUTS:
+                layer: QgsVectorLayer
+        OUTPUTS: Dictionary, key: holders ids, values: List, holdings ids
+        """
         holdersWithHoldings = {}
         features = layer.getFeatures()
         for feature in features:
@@ -401,6 +496,11 @@ class PolygonGrouper(QgsProcessingAlgorithm):
         return holdersWithHoldings
 
     def calculateTotalArea(self):
+        """
+        DESCRIPTION: Create a dictionary for holder total areas
+        INPUTS: None
+        OUTPUTS: Dictionary, key: holders ids, values: Integer
+        """
         holderTotalArea = {}
         for holder, holdings in self.holdersWithHoldings.items():
             totalArea = 0
@@ -411,6 +511,13 @@ class PolygonGrouper(QgsProcessingAlgorithm):
         return holderTotalArea
 
     def getHoldingsAreas(self, layer, areaId):
+        """
+        DESCRIPTION: Create a dictionary for holding and its area
+        INPUTS:
+                layer: QgsVectorLayer
+                areaId: Integer, Id of the polygon feature
+        OUTPUTS: Dictionary, key: holding id, values: Integer, area
+        """
         holdingsWithAreas = {}
         features = layer.getFeatures()
         for feature in features:
@@ -422,6 +529,14 @@ class PolygonGrouper(QgsProcessingAlgorithm):
         return holdingsWithAreas
 
     def determineSeedPolygons(self, layer, preference=False, selectedFeatures=None):
+        """
+        DESCRIPTION: Determine one seed polygon for each holder adn store in a self dictionary
+        INPUTS:
+                layer: QgsVectorLayer
+                preference: Boolean, the selected fature on the input layers will be the seed polygons of their holders
+                selectedFeatures: QgsVectorLayer
+        OUTPUTS: Dictionary, key: holder id, values: List, holding ids
+        """
         holdersWithSeeds = {}
         if preference:
             algParams = {
@@ -472,40 +587,13 @@ class PolygonGrouper(QgsProcessingAlgorithm):
         
         self.seeds = holdersWithSeeds
 
-    """
     def createDistanceMatrix(self, layer):
-        algParams = {
-        'INPUT':layer,
-        'ALL_PARTS': False,
-        'OUTPUT':'TEMPORARY_OUTPUT'
-        }
-        centroids = processing.run("native:centroids", algParams)['OUTPUT']
-        algParams = {
-        'INPUT':centroids,
-        'INPUT_FIELD': self.idAttribute,
-        'TARGET': centroids,
-        'TARGET_FIELD': self.idAttribute,
-        'MATRIX_TYPE': 1,
-        'NEAREST_POINTS': 0,
-        'OUTPUT':'TEMPORARY_OUTPUT'
-        }
-        matrix = processing.run("qgis:distancematrix", algParams)['OUTPUT']
-        distanceMatrix = {}
-        names = self.getAttributesNames(matrix)
-        features = matrix.getFeatures()
-        for feature in features:
-            tempDict = {}
-            for field in names:
-                value = feature.attribute(field)
-                tempDict[field] = value
-            distanceMatrix[feature.attribute('ID')] = tempDict
-
-        return distanceMatrix
-    """
-
-    def createDistanceMatrix(self, layer):
-        #import ptvsd
-        #ptvsd.debug_this_thread()
+        """
+        DESCRIPTION: Create a distance matrix of the input layer features
+        INPUTS:
+                layer: QgsVectorLayer
+        OUTPUTS: Dictionary, key: holding id, values: Distionary (nested), key: holding ids, values: Float, distances
+        """
         if self.simply:
             nearestPoints = 1000
             """
@@ -576,6 +664,12 @@ class PolygonGrouper(QgsProcessingAlgorithm):
         return distanceMatrix
 
     def filterDistanceMatrix(self, distanceMatrix):
+        """
+        DESCRIPTION: Filter a distance matrix based on the distance threshold 
+        INPUTS:
+                distanceMatrix: Dictionary, distance matrix
+        OUTPUTS: Dictionary, key: holding id, values: Distionary (nested), key: holding ids, values: Float, distances
+        """
         filteredMatrix = {}
         for key, value in distanceMatrix.items():
             sortedDistances = [(y, x) for y, x in zip(list(value.values()), list(value.keys())) if x != 'ID']
@@ -590,6 +684,12 @@ class PolygonGrouper(QgsProcessingAlgorithm):
         return filteredMatrix
 
     def getChangableHoldings(self, inDistance=None):
+        """
+        DESCRIPTION: Get a list, which can be used for changes (not a seed)
+        INPUTS:
+                inDistance: List, holding ids, which are inside the distance threshold
+        OUTPUTS: List, holding ids
+        """
         changableHoldings = []
         if inDistance:
             for holding in inDistance:
@@ -604,6 +704,15 @@ class PolygonGrouper(QgsProcessingAlgorithm):
         return changableHoldings
 
     def getNeighbours(self, layer, seed):
+        """
+        DESCRIPTION: Get neighbours holdings of a certain polygon
+        INPUTS:
+                layer: QgsVectorLayer
+                seed: holding id of the holder's seed polygon
+        OUTPUTS:
+                neighboursIds: List, holding ids
+                neighbours: QgsVectorLayer
+        """
         expression = f'"{self.idAttribute}" = \'{seed}\''
         layer.selectByExpression(expression)
         algParams = {
@@ -626,6 +735,14 @@ class PolygonGrouper(QgsProcessingAlgorithm):
         return neighboursIds, neighbours
 
     def idsForChange(self, holdingList, changables):
+        """
+        DESCRIPTION: Get holding ids, which are on the changables list
+        INPUTS:
+                holdingList: List, holding ids
+                changables: List, holding ids
+        OUTPUTS:
+                ids: List, holding ids
+        """
         try:
             ids = []
             for holdingId in holdingList:
@@ -636,6 +753,13 @@ class PolygonGrouper(QgsProcessingAlgorithm):
             return None
 
     def neighbours(self, layer, feedback):
+        """
+        DESCRIPTION: Function for make swap to get group holder's holdings around their seed polygons. The function try to swap the neighbour polygons for other holdings of the holder. 
+        INPUTS:
+                layer: QgsVectorLayer
+                feedback: QgsProcessingMultiStepFeedback
+        OUTPUTS: QgsVectorLayer
+        """
         changes = 1
         changer = True
         self.globalChangables = self.getChangableHoldings()
@@ -849,6 +973,14 @@ class PolygonGrouper(QgsProcessingAlgorithm):
         return layer
 
     def closer(self, layer, feedback, seeds=None):
+        """
+        DESCRIPTION: Function for make swap to get group holder's holdings closer to their seed polygons. The function try to swap the nearby polygons for other holdings of the holder. 
+        INPUTS:
+                layer: QgsVectorLayer
+                feedback: QgsProcessingMultiStepFeedback
+                seeds: List, holding ids
+        OUTPUTS: QgsVectorLayer
+        """
         changes = 1
         changer = True
 
@@ -1069,6 +1201,18 @@ class PolygonGrouper(QgsProcessingAlgorithm):
         return layer
 
     def createNewAttribute(self, layer, turn, adj, typer=QVariant.String, lenght=50):
+        """
+        DESCRIPTION: Create new attribute field in a layer
+        INPUTS:
+                layer: QgsVectorLayer
+                turn: Integer
+                adj: String
+                typer: QVariant
+                lenght: Integer
+        OUTPUTS: 
+                layer: QgsVectorLayer
+                fieldName: String
+        """
         fieldName = f'{turn}_{adj}'
         layerAttributes = self.getAttributesNames(layer)
         if fieldName in layerAttributes:
@@ -1086,6 +1230,15 @@ class PolygonGrouper(QgsProcessingAlgorithm):
         return layer, fieldName
 
     def setNewAttribute(self, layer, featureId, newValue, field):
+        """
+        DESCRIPTION: Set the value of a field in a layer
+        INPUTS:
+                layer: QgsVectorLayer
+                featureId: Integer
+                newValue: String or Integer
+                field: String, attribute name
+        OUTPUTS: None
+        """
         expression = ''
         expression += f'"{self.idAttribute}" = \'{featureId}\''
         layer.selectByExpression(expression)
@@ -1096,6 +1249,13 @@ class PolygonGrouper(QgsProcessingAlgorithm):
         layer.commitChanges()
 
     def setTurnAttributes(self, layer, turn):
+        """
+        DESCRIPTION: Set the values of a fields in a layer
+        INPUTS:
+                layer: QgsVectorLayer
+                turn: Integer
+        OUTPUTS: QgsVectorLayer
+        """
         layer, newId = self.createNewAttribute(layer, turn, 'id', lenght=32)
         layer, newHolder = self.createNewAttribute(layer, turn, 'holder', typer=self.holderAttributeType, lenght=self.holderAttributeLenght)
         if turn == 1:
@@ -1115,6 +1275,13 @@ class PolygonGrouper(QgsProcessingAlgorithm):
         return layer
 
     def combine_with_constant_in_all(self, elements, constant=None):
+        """
+        DESCRIPTION: Create of a list with nested lists of all of the possible combinations
+        INPUTS:
+                elements: List of strings,
+                constant: String, optional (need to be in every combination)
+        OUTPUTS: List
+        """
         all_combinations = []
         for r in range(1, len(elements) + 1):
             for combination in itertools.combinations(elements, r):
@@ -1127,6 +1294,13 @@ class PolygonGrouper(QgsProcessingAlgorithm):
         return all_combinations
 
     def checkTotalAreaThreshold(self, totalArea, holder):
+        """
+        DESCRIPTION: Check if a total area is inside the threshold or not 
+        INPUTS:
+                totalArea: Numeric
+                holder: String, holder id
+        OUTPUTS: Boolean
+        """
         minimalBound = self.holdersTotalArea[holder] - (self.holdersTotalArea[holder] * (self.tolerance / 100))
         maximalBound = self.holdersTotalArea[holder] + (self.holdersTotalArea[holder] * (self.tolerance / 100))
         if maximalBound >= totalArea >= minimalBound:
@@ -1135,12 +1309,26 @@ class PolygonGrouper(QgsProcessingAlgorithm):
             return False
 
     def calculateCombinationArea(self, combinations):
+        """
+        DESCRIPTION: Calculate a list of holding's total area 
+        INPUTS:
+                combinations: List, holding ids
+        OUTPUTS: Numeric
+        """
         temporaryArea = 0
         for combination in combinations:
             temporaryArea += self.holdingsWithArea[combination]
         return temporaryArea
 
     def isCloser(self, thresholdDistance, featureIds, seed):
+        """
+        DESCRIPTION: Check if ceratin features are closer to the seed than the threshold
+        INPUTS:
+                thresholdDistance: Numeric
+                featureIds: List, holding ids
+                seed: String, holding id
+        OUTPUTS: Boolean
+        """
         isCloserBool = True
         for featureId in featureIds:
             distance = self.distanceMatrix[seed][featureId]
@@ -1149,6 +1337,15 @@ class PolygonGrouper(QgsProcessingAlgorithm):
         return isCloserBool
 
     def maxDistance(self, featureIds, seed, layer=None):
+        """
+        DESCRIPTION: Calculate maximum distance of a list of holding and the seed polygon
+        INPUTS:
+                featureIds: List, holding ids
+                seed: String, holding id
+                layer: QgsVectorLayer, optional
+        OUTPUTS: Numeric
+        """
+        isCloserB
         maxDistance = 0
         for featureId in featureIds:
             try:
@@ -1173,11 +1370,28 @@ class PolygonGrouper(QgsProcessingAlgorithm):
         return maxDistance
 
     def calculateCompositeNumber(self, seed, featureId):
+        """
+        DESCRIPTION: Calculate composite number of the wieght and the distance
+        INPUTS:
+                seed: String, holding id
+                featureId: String, holding id
+        OUTPUTS: Numeric
+        """
         area = self.holdingsWithArea[featureId]
         distance = self.distanceMatrix[seed][featureId]
         return area*distance
 
     def setAttributeValues(self, layer, holder, targetHolder, tempHolderCombination, tempTargetCombination):
+        """
+        DESCRIPTION: Set attributes value of a certain swap
+        INPUTS:
+                layer: QgsVectorLayer
+                holder: String, holder id
+                targetHolder: String, holder id
+                tempHolderCombination: List, holding ids
+                tempTargetCombination: List, holding ids
+        OUTPUTS: None
+        """
         if len(tempHolderCombination) > 1 and len(tempTargetCombination) > 1:
             #many to many change
             for hold in tempHolderCombination:
@@ -1228,6 +1442,13 @@ class PolygonGrouper(QgsProcessingAlgorithm):
             self.counter += 1    
 
     def filterTouchinFeatures(self, layer, toSeed=False):
+        """
+        DESCRIPTION: Determine, if a holder holding touches its seed polygon. If true, filter it, from the changables, and can be mark as seed
+        INPUTS:
+                layer: QgsVectorLayer
+                toSeed: Boolean
+        OUTPUTS: None
+        """
         algParams =  {
         'INPUT':layer,
         'FIELD':[self.actualHolderAttribute],
@@ -1274,6 +1495,13 @@ class PolygonGrouper(QgsProcessingAlgorithm):
                 self.seeds[holderValue].append(idValue)
 
     def createMergedFile(self, layer, directory):
+        """
+        DESCRIPTION: Create merged file based on holders attribute field
+        INPUTS:
+                layer: QgsVectorLayer
+                directory: String, absolute path to save the new layer
+        OUTPUTS: None
+        """
         lastHolderAttribute = int(self.actualHolderAttribute.split('_')[0])
         if lastHolderAttribute == self.steps-2:
             if self.steps-2 >= 10:
