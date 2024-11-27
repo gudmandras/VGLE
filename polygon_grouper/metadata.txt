@@ -16,7 +16,7 @@ tracker=https://github.com/gudmandras/VGLE/issues
 repository=https://github.com/gudmandras/VGLE
 homepage=https://github.com/gudmandras/VGLE/wiki
 
-hasProcessingProvider=yes
+hasProcessingProvider=True
 tags=python
 category=Vector
 icon=icon.png
