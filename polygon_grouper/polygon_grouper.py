@@ -43,7 +43,6 @@ import traceback
 from qgis.core import QgsMessageLog, Qgis
 
 MESSAGE_CATEGORY = 'Messages'
-
 """
 def enable_remote_debugging():
     try:
@@ -61,7 +60,6 @@ def enable_remote_debugging():
         QgsMessageLog.logMessage(repr(format_exception[1]), MESSAGE_CATEGORY, Qgis.Critical)
         QgsMessageLog.logMessage(repr(format_exception[2]), MESSAGE_CATEGORY, Qgis.Critical)
 """
-
 
 class vgle(object):
     """QGIS Plugin Implementation."""
