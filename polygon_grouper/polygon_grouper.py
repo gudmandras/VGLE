@@ -43,6 +43,7 @@ import traceback
 from qgis.core import QgsMessageLog, Qgis
 
 MESSAGE_CATEGORY = 'Messages'
+
 """
 def enable_remote_debugging():
     try:

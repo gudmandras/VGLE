@@ -1,0 +1,38 @@
+<html><body><h2>Algorithm description</h2>
+    <p>This algorithm is employed for the purpose of regrouping polygons. The regrouping process entails the exchange of holder values in the 'holder field' between two or more polygons, on the condition that the sum of the values in the 'balanced by field' for the two holders is identical or the difference prior to and following the swap is less than a specified threshold. The objective of the process is to maximise the adjacency of the holders' polygons, or alternatively to minimise the separation between them, or both. The development of this algorithm was primarily to support the reduction of land fragmentation by land exchange, yet it is sufficiently general to be applied to a number of other areas, including the regrouping of agent territories or analogous geometric tasks.</p>
+    <h2>Input parameters</h2>
+    <h3>Input layer</h3>
+    <p>Vector layer with polygon geometries.</p>
+    <h3>Give preference for the selected polygons</h3>
+    <p>The selected features in the input layer will be used as seed polygons, and the grouping will be around these features. Without these, the seed polygons are the largest polygons per the assigned by field unique values.</p>
+    <h3>Holder by field</h3>
+    <p>The field which contains holder of different number of features inside the input layer.</p>
+    <h3>Balanced by field</h3>
+    <p>The value which applied for the assigned by field's unique values polygons. Recommended an area field.</p>
+    <h3>Distance treshold</h3>
+    <p>The distance range within the grouping for a certain polygon happens. Distance in meter.</p>
+    <h3>Tolerance</h3>
+    <p>The percent for the balance field.</p>
+    <h3>Swap to get</h3>
+    <p>The method, with the grouping will be happen.
+    Neighbours: Change the neighbours of the seed polygons.
+    Closer: Change to get closer the other polygons to the seed polygon.
+    Neighbours, then closer: Combinated run, first Neighbours, than Closer function will be run on the results of the Neighbours.
+    Closer, then neighbours: Combinated run, first Closer, than Neighbours function will be run on the results of the Closer.
+    Hybrid: Combine different approaches: neighbours, distance, shape indicators.</p>
+    <h3>Output directory</h3>
+    <p>The directory where the outputs will be saved. Two output layers are created, their names are <base layer name> + algorithm name + timeStamp:
+    First: Vector layer containing the regrouped polygons 
+    Second: Merged layer containing the merged version of the polygons, the name includes the "merged" tag.</p>
+    <h2>Additional parameters</h2>
+    <h3>Only use the selected features</h3>
+    <p>Only works if the "Give preference to selected polygons" parameter is True. If checked, only the selected polygons are used, otherwise the selected and largest polygons together.</p>
+    <h3>Use single holding's holders polygons</h3>
+    <p>Single-holding polygons are not seeds. If checked, they can be swaped, otherwise they are not part of the changes</p>
+    <h3>Strict conditions for neighbours method</h3>
+    <p>Intend to reduce the average distance and not exceed the existing maximum distance conditions when using any of the Neighbours algorithm methods. This option guarantees the reduction of the polygon distance for each holder.</p>
+    <h3>Simplfy algorithm to process big dataset</h3>
+    <p>Simplified algorithm for processing large datasets. Recommended when the input dataset contains more than 4000 polygons. The simplified algorithm only involves swapping holders between two polygons.</p>
+    <h3>Generate statistics</h3>
+    <p>Generate statistics about the run: indicators statistics, change logs, holder relations log</p>
+    <br></body></html>
