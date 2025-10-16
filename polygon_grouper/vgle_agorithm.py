@@ -171,8 +171,8 @@ class PolygonGrouper(QgsProcessingAlgorithm):
         self.totalDistances, self.holdingWithSeedDistance = vgle_utils.calculateTotalDistances(self, layer)
 
         if parameters['Stats']:
-            beforeData = self.calculateStatData(layer, self.holderAttribute)
-            self.interactionTable = self.createInteractionOutput(self.holdersWithHoldings)
+            beforeData = vgle_utils.calculateStatData(self, layer, self.holderAttribute)
+            self.interactionTable = vgle_utils.createInteractionOutput(self.holdersWithHoldings)
 
         feedback.setCurrentStep(1)
         if feedback.isCanceled():

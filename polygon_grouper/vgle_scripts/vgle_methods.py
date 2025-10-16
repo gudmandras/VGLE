@@ -341,7 +341,7 @@ def neighbours(self, layer, feedback, totalAreas=None):
         feedback.setCurrentStep(1 + turn)
         feedback.pushInfo(f'Save turn results to the file')
         if feedback.isCanceled():
-            return {}
+            return None, None
     return layer, holdersLocalTotalArea
 
 def closer(self, layer, feedback, seeds=None, totalAreas=None):
@@ -789,7 +789,7 @@ def hybrid_method(self, layer, feedback):
                         holderAvgDistanceNew = vgle_features.avgDistance(self, targetCombination, seed, layer)
                         targetAvgDistanceNew = vgle_features.avgDistance(self, holderCombination, targetHolderSeed, layer)
 
-                        if not (targetAvgDistanceNew < targetAvgDistanceOld) and (holderAvgDistanceNew < holderAvgDistanceOld):
+                        if not (targetAvgDistanceNew < targetAvgDistanceOld) and not (holderAvgDistanceNew < holderAvgDistanceOld):
                             continue
 
                         # Shape check
@@ -814,6 +814,9 @@ def hybrid_method(self, layer, feedback):
                                                copy.copy(holderCombination),
                                                copy.copy(newHolderTotalArea),
                                                copy.copy(newTargetTotalArea))
+                        if feedback.isCanceled():
+                            vgle_utils.endLogging() 
+                            return None, None
 
             if bestCombination:
                 _, targetHolder, tempTargetCombination, tempHolderCombination, tempHolderTotalArea, tempTargetTotalArea = bestCombination
@@ -823,8 +826,8 @@ def hybrid_method(self, layer, feedback):
                     self.interactionTable[holder][targetHolder] += 1
                     self.interactionTable[targetHolder][holder] += 1
 
-                update_areas_and_distances(self, holder, targetHolder, hComb, tComb, seed, targetSeed)
-                vgle_utils.commitMessage = f'Change {self.counter} for {tempTargetCombination} (holder:{targetHolder}) to get closer to {seed} (holder:{holder}): ' \
+                vgle_utils.update_areas_and_distances(self, holder, targetHolder, tempHolderCombination, tempTargetCombination, seed, targetSeed, localChangables)
+                commitMessage = f'Change {self.counter} for {tempTargetCombination} (holder:{targetHolder}) to get closer to {seed} (holder:{holder}): ' \
                                 f'{tempHolderCombination} for {tempTargetCombination}'
                 logging.debug(commitMessage)
                 feedback.pushInfo(commitMessage)
@@ -840,17 +843,17 @@ def hybrid_method(self, layer, feedback):
 
             if feedback.isCanceled():
                 vgle_utils.endLogging()
-                return {}
+                return None, None
 
         if feedback.isCanceled():
             vgle_utils.endLogging() 
-            return {}
+            return None, None
         if turn == 1:
             logging.debug(f'Changes in turn {turn}: {self.counter}')
             feedback.pushInfo(f'Changes in turn {turn}: {self.counter}') 
             if self.counter == 0:
                 changer = False
-                return None
+                return None, None
             else:
                 changes = copy.deepcopy(self.counter)
                 vgle_features.filterTouchingFeatures(self, layer)

@@ -885,7 +885,7 @@ def saveInteractionOutputGOPA(self, path, layer, actualHoldingId):
                 if x != 2:
                     file.write(f'{oldHolder};{newHolder};{x}\n')
 
-def update_areas_and_distances(self, holder, targetHolder, holderComb, targetComb, seed, targetSeed):
+def update_areas_and_distances(self, holder, targetHolder, holderComb, targetComb, seed, targetSeed, localChangables):
     # update localChangables, distances, areas after swap
     for h in holderComb:
         if h in localChangables:
