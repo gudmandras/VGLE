@@ -33,8 +33,6 @@ def multi_distance_matrix(outputDirectory, centroids, idAttribute):
     cpus = os.cpu_count() - 2
     totalFeatures = layer.featureCount()
     chunkSize = math.ceil(totalFeatures / cpus)
-    print(chunkSize)
-
     chunkFiles = split_centroids_to_chunks(layer, outputDirectory, chunkSize)
 
     tasks = []
