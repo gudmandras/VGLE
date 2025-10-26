@@ -174,8 +174,6 @@ def createDistanceMatrix(self, layer, nearestPoints=0, simply=False):
     #INPUTS:
     #        layer: QgsVectorLayer
     #OUTPUTS: Dictionary, key: holding id, values: Distionary (nested), key: holding ids, values: Float, distances
-    import ptvsd
-    ptvsd.debug_this_thread()
     algParams = {
         'INPUT': layer,
         'ALL_PARTS': False,
