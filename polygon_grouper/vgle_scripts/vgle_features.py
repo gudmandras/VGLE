@@ -140,18 +140,7 @@ def maxDistance(self, featureIds, seed, layer=None):
             if distance > maxDistance:
                 maxDistance = distance
         except KeyError:
-            expression = f'"{self.idAttribute}" = \'{seed}\''
-            layer.selectByExpression(expression)
-            featureSeed = layer.selectedFeatures()[0]
-            expression = f'"{self.idAttribute}" = \'{featureId}\''
-            layer.selectByExpression(expression)
-            featureTarget = layer.selectedFeatures()[0]
-            # Get geometries of the features
-            geometrySeed = featureSeed.geometry()
-            geometryTarget = featureTarget.geometry()
-            # Calculate the distance
-            distance = geometrySeed.distance(geometryTarget)
-            self.distanceMatrix[seed][featureId] = distance
+            distance = calculateDistance(self, featureIds, seed, layer)
             if distance > maxDistance:
                 maxDistance = distance
     return maxDistance
@@ -174,20 +163,26 @@ def avgDistance(self, featureIds, seed, layer=None):
             distance = self.distanceMatrix[seed][featureId]
             sumDistance += distance
         except KeyError:
-            expression = f'"{self.idAttribute}" = \'{seed}\''
-            layer.selectByExpression(expression)
-            featureSeed = layer.selectedFeatures()[0]
-            expression = f'"{self.idAttribute}" = \'{featureId}\''
-            layer.selectByExpression(expression)
-            featureTarget = layer.selectedFeatures()[0]
-            # Get geometries of the features
-            geometrySeed = featureSeed.geometry()
-            geometryTarget = featureTarget.geometry()
-            # Calculate the distance
-            distance = geometrySeed.distance(geometryTarget)
-            self.distanceMatrix[seed][featureId] = distance
+            distance = calculateDistance(self, featureIds, seed, layer)
             sumDistance += distance
     return sumDistance / divider
+
+def calculateDistance(self, featureId, seed, layer):
+    expression = f'"{self.idAttribute}" = \'{seed}\''
+    layer.selectByExpression(expression)
+    featureSeed = layer.selectedFeatures()[0]
+    expression = f'"{self.idAttribute}" = \'{featureId}\''
+    layer.selectByExpression(expression)
+    featureTarget = layer.selectedFeatures()[0]
+    # Get geometries of the features
+    geometrySeed = featureSeed.geometry()
+    geometryTarget = featureTarget.geometry()
+    # Calculate the distance
+    distance = geometrySeed.distance(geometryTarget)
+    self.distanceMatrix[seed][featureId] = distance
+
+    return distance
+    
 
 
 def filterTouchingFeatures(self, layer, toSeed=False):
@@ -533,17 +528,7 @@ def holdingsClosestToSeed(self, layer, holdings, seed, seedList):
                 try:
                     distance = self.distanceMatrix[sed][holding]
                 except KeyError:
-                    expression = f'"{self.idAttribute}" = \'{sed}\''
-                    layer.selectByExpression(expression)
-                    featureSeed = layer.selectedFeatures()[0]
-                    expression = f'"{self.idAttribute}" = \'{holding}\''
-                    layer.selectByExpression(expression)
-                    featureTarget = layer.selectedFeatures()[0]
-                    # Get geometries of the features
-                    geometrySeed = featureSeed.geometry()
-                    geometryTarget = featureTarget.geometry()
-                    # Calculate the distance
-                    distance = geometrySeed.distance(geometryTarget)
+                    distance = calculateDistance(self, holding, sed, layer)
                 if distance < closestDistance:
                     closestSeed = sed
                     closestDistance = distance
@@ -551,17 +536,7 @@ def holdingsClosestToSeed(self, layer, holdings, seed, seedList):
                 try:
                     distance = self.distanceMatrix[sed][holding]
                 except KeyError:
-                    expression = f'"{self.idAttribute}" = \'{sed}\''
-                    layer.selectByExpression(expression)
-                    featureSeed = layer.selectedFeatures()[0]
-                    expression = f'"{self.idAttribute}" = \'{holding}\''
-                    layer.selectByExpression(expression)
-                    featureTarget = layer.selectedFeatures()[0]
-                    # Get geometries of the features
-                    geometrySeed = featureSeed.geometry()
-                    geometryTarget = featureTarget.geometry()
-                    # Calculate the distance
-                    distance = geometrySeed.distance(geometryTarget)
+                    distance = calculateDistance(self, holding, sed, layer)
                 closestSeed = sed
                 closestDistance = distance
         if closestSeed == seed:

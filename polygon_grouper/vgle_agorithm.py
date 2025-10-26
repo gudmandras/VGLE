@@ -162,7 +162,10 @@ class PolygonGrouper(QgsProcessingAlgorithm):
         featureThreshold = 5000
         totalFeatures = layer.featureCount()
         if totalFeatures > featureThreshold or self.simply:
-            self.distanceMatrix = vgle_utils.createDistanceMatrix(self, layer, nearestPoints=int(totalFeatures*0.1), simply=self.simply)
+            if self.simply:
+                self.distanceMatrix = vgle_utils.createDistanceMatrix(self, layer, simply=self.simply)
+            else:
+                self.distanceMatrix = vgle_utils.createDistanceMatrix(self, layer, nearestPoints=int(totalFeatures*0.1), simply=self.simply)
         else:
             self.distanceMatrix = vgle_utils.createDistanceMatrix(self, layer)
         self.filteredDistanceMatrix = vgle_utils.filterDistanceMatrix(self.distance, self.distanceMatrix)

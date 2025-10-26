@@ -169,40 +169,47 @@ def determineSeedPolygons(layer, self, preference=False, selectedFeatures=None):
     return holdersWithSeeds, selectedHolders
 
 
-def createDistanceMatrix(self, layer, nearestPoints=1000, simply=False):
+def createDistanceMatrix(self, layer, nearestPoints=0, simply=False):
     #DESCRIPTION: Create a distance matrix of the input layer features
     #INPUTS:
     #        layer: QgsVectorLayer
     #OUTPUTS: Dictionary, key: holding id, values: Distionary (nested), key: holding ids, values: Float, distances
-    if simply :
-        if not nearestPoints:
-            epsg = layer.crs().geographicCrsAuthId()[-4:]
-            bufferLayer = QgsVectorLayer(f"Polygon?crs=epsg:{epsg}", "buffer", "memory")
-
-            for seed in self.seeds:
-                expression = f'"{self.idAttribute}" = \'{self.seeds[seed][0]}\''
-                layer.selectByExpression(expression)
-                selectedFeature = layer.selectedFeatures()
-                geomBuffer = selectedFeature[0].geometry().buffer(self.distance+100, -1)
-                f = QgsFeature()
-                f.setGeometry(geomBuffer)
-                bufferLayer.dataProvider().addFeatures([f])      
-                features = layer.getFeatures()
-                inputs = [f for f in features]
-                tempCalculator = 0
-                for feat in inputs:
-                    if feat.geometry().intersects(geomBuffer):
-                        tempCalculator += 1
-                if tempCalculator > nearestPoints:
-                    nearestPoints = tempCalculator
-                layer.removeSelection()
-
+    import ptvsd
+    ptvsd.debug_this_thread()
     algParams = {
         'INPUT': layer,
         'ALL_PARTS': False,
         'OUTPUT': 'TEMPORARY_OUTPUT'
     }
     centroids = processing.run("native:centroids", algParams)['OUTPUT']
+
+    if simply and not nearestPoints:
+        import numpy as np
+        from scipy.spatial import cKDTree
+        distanceMatrix = {}
+        points = []
+        fids = []
+
+        for feature in centroids.getFeatures():
+            geom = feature.geometry().asPoint()
+            points.append((geom.x(), geom.y()))
+            fids.append(feature.attribute(self.idAttribute))
+
+        points_A = np.array(points)
+
+        tree = cKDTree(points_A)
+
+        results = tree.query_ball_point(points_A, r=self.distance)
+
+        for i, result in enumerate(results):
+            distanceMatrix[fids[i]] = {}
+            for j in result:
+                if i == j:
+                    continue
+                dist = np.linalg.norm(points_A[i] - points_A[j])
+                distanceMatrix[fids[i]][fids[j]] = dist
+        del points_A, tree, results
+        return distanceMatrix
     
     algParams = {
         'INPUT': centroids,
@@ -213,16 +220,13 @@ def createDistanceMatrix(self, layer, nearestPoints=1000, simply=False):
         'NEAREST_POINTS': 0,
         'OUTPUT': 'TEMPORARY_OUTPUT'
     }
-    if simply:
-        if not nearestPoints:
-            nearestPoints = int(totalFeatures / 10)
+    if simply and nearestPoints:
         algParams['MATRIX_TYPE'] = 0
         algParams['NEAREST_POINTS'] = nearestPoints
     matrix = processing.run("qgis:distancematrix", algParams)['OUTPUT']
     
-    if simply:
+    if simply and nearestPoints:
         distanceMatrix = {}
-        names = vgle_layers.getAttributesNames(matrix)
         features = matrix.getFeatures()
         for feature in features:
             featureId = feature.attribute('InputID')
@@ -292,17 +296,7 @@ def calculateTotalDistances(self, layer):
                 distance = self.distanceMatrix[seed][holding]
                 sumDistance += distance
             except KeyError:
-                expression = f'"{self.idAttribute}" = \'{seed}\''
-                layer.selectByExpression(expression)
-                featureSeed = layer.selectedFeatures()[0]
-                expression = f'"{self.idAttribute}" = \'{holding}\''
-                layer.selectByExpression(expression)
-                featureTarget = layer.selectedFeatures()[0]
-                # Get geometries of the features
-                geometrySeed = featureSeed.geometry()
-                geometryTarget = featureTarget.geometry()
-                # Calculate the distance
-                distance = geometrySeed.distance(geometryTarget)
+                distance = vgle_features.calculateDistance(self, holding, seed, layer)
                 sumDistance += distance
             holdingWithSeedDistance[holding] = distance
         totalDistances[holder] = sumDistance
@@ -449,7 +443,7 @@ def checkTotalAreaThreshold(self, totalArea, holder):
         return False
 
 
-def isCloser(self, thresholdDistance, featureIds, seed, holder):
+def isCloser(self, thresholdDistance, featureIds, seed, holder, layer=None):
     """
     DESCRIPTION: Check if certain features are closer to the seed than the threshold
     INPUTS:
@@ -461,7 +455,10 @@ def isCloser(self, thresholdDistance, featureIds, seed, holder):
     isCloserBool = True
     sumDistance = 0
     for featureId in featureIds:
-        distance = self.distanceMatrix[seed][featureId]
+        try:
+            distance = self.distanceMatrix[seed][featureId]
+        except KeyError:
+            distance = vgle_features.calculateDistance(self, featureId, seed, layer)
         if distance > thresholdDistance:
             isCloserBool = False
         sumDistance += distance
@@ -885,20 +882,28 @@ def saveInteractionOutputGOPA(self, path, layer, actualHoldingId):
                 if x != 2:
                     file.write(f'{oldHolder};{newHolder};{x}\n')
 
-def update_areas_and_distances(self, holder, targetHolder, holderComb, targetComb, seed, targetSeed, localChangables):
+def update_areas_and_distances(self, holder, targetHolder, holderComb, targetComb, seed, targetSeed, localChangables, layer=None):
     # update localChangables, distances, areas after swap
     for h in holderComb:
         if h in localChangables:
             localChangables.remove(h)
         self.totalDistances[holder] -= self.holdingWithSeedDistance[h]
-        self.holdingWithSeedDistance[h] = self.distanceMatrix[targetSeed][h]
+        try:
+            self.holdingWithSeedDistance[h] = self.distanceMatrix[targetSeed][h]
+        except KeyError:
+            distance = vgle_features.calculateDistance(self, h, targetSeed, layer)
+            self.holdingWithSeedDistance[h] = distance
         self.totalDistances[targetHolder] += self.holdingWithSeedDistance[h]
 
     for t in targetComb:
         if t in localChangables:
             localChangables.remove(t)
         self.totalDistances[targetHolder] -= self.holdingWithSeedDistance[t]
-        self.holdingWithSeedDistance[t] = self.distanceMatrix[seed][t]
+        try:
+            self.holdingWithSeedDistance[t] = self.distanceMatrix[seed][t]
+        except KeyError:
+            distance = vgle_features.calculateDistance(self, h, targetSeed, layer)
+            self.holdingWithSeedDistance[t] = distance
         self.totalDistances[holder] += self.holdingWithSeedDistance[t]
 
 def split_centroids_to_chunks(centroids, outputDirectory, chunkSize):
