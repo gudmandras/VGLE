@@ -19,7 +19,7 @@
     Closer: Change to get closer the other polygons to the seed polygon.
     Neighbours, then closer: Combinated run, first Neighbours, than Closer function will be run on the results of the Neighbours.
     Closer, then neighbours: Combinated run, first Closer, than Neighbours function will be run on the results of the Closer.
-    Hybrid: Combine different approaches: neighbours, distance, shape indicators.</p>
+    <!--Hybrid: Combine different approaches: neighbours, distance, shape indicators.--></p>
     <h3>Output directory</h3>
     <p>The directory where the outputs will be saved. Two output layers are created, their names are <base layer name> + algorithm name + timeStamp:
     First: Vector layer containing the regrouped polygons 

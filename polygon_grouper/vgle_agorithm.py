@@ -11,6 +11,7 @@ import time
 from datetime import datetime
 
 from qgis.PyQt.QtCore import QCoreApplication
+from qgis.PyQt.QtWidgets import QDialog, QVBoxLayout, QPushButton, QWidget
 from qgis.core import (QgsProject,
                        QgsProcessing,
                        QgsProcessingAlgorithm,
@@ -48,11 +49,11 @@ class PolygonGrouper(QgsProcessingAlgorithm):
                                                        minValue=0, defaultValue=1000))
         self.addParameter(QgsProcessingParameterEnum('SwapToGet', 'Swap to get',
                                                      options=['Neighbours', 'Closer', 'Neighbours, then closer',
-                                                              'Closer, then neighbours', 'Hybrid'],
+                                                              'Closer, then neighbours'],
                                                      allowMultiple=False, defaultValue='Neighbours'))
         self.addParameter(QgsProcessingParameterFolderDestination('OutputDirectory', 'Output directory',
                                                                   defaultValue=None, createByDefault=True))
-        self.algorithmNames = ['Neighbours', 'Closer', "Neighbours, then closer", "Closer, then neighbours", 'Hybrid']
+        self.algorithmNames = ['Neighbours', 'Closer', "Neighbours, then closer", "Closer, then neighbours"]
         self.counter = 0
         
         onlySelected = QgsProcessingParameterBoolean('OnlySelected', 'Only use the selected features',
@@ -162,10 +163,15 @@ class PolygonGrouper(QgsProcessingAlgorithm):
         featureThreshold = 5000
         totalFeatures = layer.featureCount()
         if totalFeatures > featureThreshold or self.simply:
-            self.distanceMatrix = vgle_utils.createDistanceMatrix(self, layer, nearestPoints=int(totalFeatures*0.1), simply=self.simply)
+            if self.simply:
+                self.distanceMatrix = vgle_utils.createDistanceMatrix(self, layer, simply=self.simply)
+                self.filteredDistanceMatrix = self.distanceMatrix.copy()
+            else:
+                self.distanceMatrix = vgle_utils.createDistanceMatrix(self, layer, nearestPoints=int(totalFeatures*0.1), simply=self.simply)
+                self.filteredDistanceMatrix = vgle_utils.filterDistanceMatrix(self.distance, self.distanceMatrix)
         else:
             self.distanceMatrix = vgle_utils.createDistanceMatrix(self, layer)
-        self.filteredDistanceMatrix = vgle_utils.filterDistanceMatrix(self.distance, self.distanceMatrix)
+            self.filteredDistanceMatrix = vgle_utils.filterDistanceMatrix(self.distance, self.distanceMatrix)
         feedback.pushInfo('Distance matrix calculated')
 
         self.totalDistances, self.holdingWithSeedDistance = vgle_utils.calculateTotalDistances(self, layer)
@@ -202,8 +208,8 @@ class PolygonGrouper(QgsProcessingAlgorithm):
                 swapedLayer, totalAreas = vgle_methods.neighbours(self, swapedLayer, feedback, totalAreas)
             else:
                 swapedLayer = False
-        elif self.algorithmIndex == 4:
-            swapedLayer = vgle_methods.hybrid_method(self, layer, feedback)
+        #elif self.algorithmIndex == 4:
+        #    swapedLayer = vgle_methods.hybrid_method(self, layer, feedback)
         # Save results and create merged file
         if swapedLayer:
             feedback.setCurrentStep(self.steps-1)

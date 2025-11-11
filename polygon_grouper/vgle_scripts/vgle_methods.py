@@ -151,7 +151,8 @@ def neighbours(self, layer, feedback, totalAreas=None):
                                 if combTurn > 10000*combinationLenght and lenTurn > 20000:
                                     break
                             for neighbourCombination in neighbourHoldingsCombinations:                
-                                lenTurn += 1            
+                                lenTurn += 1  
+                                combTurn += 1            
                                 temporaryHolderArea = vgle_utils.calculateCombinationArea(self, combination)                             
                                 if self.strict:
                                     # Distance conditions
@@ -161,7 +162,7 @@ def neighbours(self, layer, feedback, totalAreas=None):
                                         holderAvgDistanceNew = vgle_features.avgDistance(self, neighbourCombination, seed, layer)
                                         targetCloser = True
                                         targetAvgDistanceNew, targetAvgDistanceOld = 1,2
-                                        holderCloser = vgle_utils.isCloser(self, targetMaxDistance, combination, targetHolderSeed, neighbourHolder)
+                                        holderCloser = vgle_utils.isCloser(self, targetMaxDistance, combination, targetHolderSeed, neighbourHolder, layer)
                                     else:
                                         targetMaxDistance = vgle_features.maxDistance(self, neighbourCombination, targetHolderSeed, layer)
                                         targetAvgDistanceOld = vgle_features.avgDistance(self, neighbourCombination, targetHolderSeed, layer)
@@ -169,8 +170,8 @@ def neighbours(self, layer, feedback, totalAreas=None):
                                         holderAvgDistanceOld = vgle_features.avgDistance(self, combination, seed, layer)
                                         holderAvgDistanceNew = vgle_features.avgDistance(self, neighbourCombination, seed, layer)
                                         targetAvgDistanceNew = vgle_features.avgDistance(self, combination, targetHolderSeed, layer)
-                                        targetCloser = vgle_utils.isCloser(self, holderMaxDistance, neighbourCombination, seed, holder)
-                                        holderCloser = vgle_utils.isCloser(self, targetMaxDistance, combination, targetHolderSeed, neighbourHolder)
+                                        targetCloser = vgle_utils.isCloser(self, holderMaxDistance, neighbourCombination, seed, holder, layer)
+                                        holderCloser = vgle_utils.isCloser(self, targetMaxDistance, combination, targetHolderSeed, neighbourHolder, layer)
                                 else:
                                     targetCloser, holderCloser = True, True
                                     targetAvgDistanceNew, targetAvgDistanceOld = 1,2
@@ -196,7 +197,6 @@ def neighbours(self, layer, feedback, totalAreas=None):
                                                 holderNewTotalArea = newHolderTotalArea
                                                 neighbourNewTotalArea = newNeighbourTotalArea
                                                 totalAreaDifference = difference
-                                                combTurn += 1
                                         else:
                                             if thresholdHolder and thresholdNeighbour and difference < totalAreaDifference:
                                                 holderNewHoldignNum = self.holdersHoldingNumber[holder] - len(combination) + len(neighbourCombination)
@@ -208,105 +208,21 @@ def neighbours(self, layer, feedback, totalAreas=None):
                                                 neighbourCombinationForChange = neighbourCombination
                                                 holderNewTotalArea = newHolderTotalArea
                                                 neighbourNewTotalArea = newNeighbourTotalArea
-                                                totalAreaDifference = difference
-                                                combTurn += 1                               
+                                                totalAreaDifference = difference 
 
-                        if holderCombinationForChange and neighbourCombinationForChange:
+                        if holderCombinationForChange and neighbourCombinationForChange:       
                             vgle_layers.setAttributeValues(self, layer, holder, neighbourHolder, holderCombinationForChange, neighbourCombinationForChange)
                             if self.stats:
                                 self.interactionTable[holder][neighbourHolder] += 1
-                                self.interactionTable[neighbourHolder][holder] += 1
-                            if len(holderCombinationForChange) > 1 and len(neighbourCombinationForChange) > 1:
-                                #many to many change
-                                for holding in holderCombinationForChange:
-                                    localChangables.pop(localChangables.index(holding))
-                                    changesIds.append(holding)
-                                    self.totalDistances[holder] = self.totalDistances[holder] - self.holdingWithSeedDistance[holding]
-                                    self.holdingWithSeedDistance[holding] = self.distanceMatrix[targetHolderSeed][holding]
-                                    self.totalDistances[neighbourHolder] += self.holdingWithSeedDistance[holding]
-                                for ngh in neighbourCombinationForChange:
-                                    localChangables.pop(localChangables.index(ngh))
-                                    changesIds.append(ngh)
-                                    self.totalDistances[neighbourHolder] = self.totalDistances[neighbourHolder] - self.holdingWithSeedDistance[ngh]
-                                    self.holdingWithSeedDistance[ngh] = self.distanceMatrix[seed][ngh]
-                                    self.totalDistances[holder] += self.holdingWithSeedDistance[ngh]
-                                self.globalChangables.pop(self.globalChangables.index(neighbourTargetFeatureId))
-                                self.seeds[holder].append(neighbourTargetFeatureId)
-                                holdersLocalTotalArea[holder] = holderNewTotalArea
-                                holdersLocalTotalArea[neighbourHolder] = neighbourNewTotalArea
-                                commitMessage = f'Change {str(self.counter)} for {neighbourTargetFeatureId} (holder:{neighbourHolder}) as neighbour of {seed} (holder:{holder}): {holderCombinationForChange} for {neighbourCombinationForChange}'
-                                logging.debug(commitMessage)
-                                feedback.pushInfo(commitMessage)
-                            elif len(holderCombinationForChange) > 1 and len(neighbourCombinationForChange) == 1 or len(holderCombinationForChange) == 1 and len(neighbourCombinationForChange) > 1:
-                                #many to one change
-                                if len(holderCombinationForChange) > 1:
-                                    for hold in holderCombinationForChange:
-                                        localChangables.pop(localChangables.index(hold))
-                                        changesIds.append(hold)
-                                        self.totalDistances[holder] = self.totalDistances[holder] - self.holdingWithSeedDistance[hold] 
-                                        if targetHolderSeed:
-                                            self.holdingWithSeedDistance[hold] = self.distanceMatrix[targetHolderSeed][hold]
-                                        else:
-                                            self.holdingWithSeedDistance[hold] = self.distanceMatrix[neighbourTargetFeatureId][hold]
-                                        if targetHolderSeed:
-                                            self.totalDistances[neighbourHolder] += self.holdingWithSeedDistance[hold]
-                                        else:
-                                            if self.useSingle:
-                                                try:
-                                                    self.totalDistances[neighbourHolder] += self.holdingWithSeedDistance[hold]
-                                                except KeyError:
-                                                    self.totalDistances[neighbourHolder] = 0
-                                                    self.totalDistances[neighbourHolder] = self.holdingWithSeedDistance[hold]
-                                    localChangables.pop(localChangables.index(neighbourTargetFeatureId))
-                                    changesIds.append(neighbourTargetFeatureId)
-                                    if targetHolderSeed:
-                                        self.totalDistances[neighbourHolder] = self.totalDistances[neighbourHolder] - self.holdingWithSeedDistance[neighbourTargetFeatureId]
-                                    else:
-                                        if self.useSingle:
-                                            self.totalDistances[neighbourHolder] = self.totalDistances[neighbourHolder] - self.holdingWithSeedDistance[neighbourTargetFeatureId]
-                                    self.holdingWithSeedDistance[neighbourTargetFeatureId] = self.distanceMatrix[seed][neighbourTargetFeatureId]
-                                    self.totalDistances[holder] += self.holdingWithSeedDistance[neighbourTargetFeatureId]
-                                else:
-                                    for ngh in neighbourCombinationForChange:
-                                        localChangables.pop(localChangables.index(ngh))
-                                        changesIds.append(ngh)
-                                        self.totalDistances[neighbourHolder] = self.totalDistances[neighbourHolder] - self.holdingWithSeedDistance[ngh] 
-                                        self.holdingWithSeedDistance[ngh] = self.distanceMatrix[seed][ngh]
-                                        self.totalDistances[holder] += self.holdingWithSeedDistance[ngh]
-                                    localChangables.pop(localChangables.index(holderCombinationForChange[0]))
-                                    changesIds.append(holderCombinationForChange[0])
-                                    self.totalDistances[holder] = self.totalDistances[holder] - self.holdingWithSeedDistance[holderCombinationForChange[0]] 
-                                    self.holdingWithSeedDistance[holderCombinationForChange[0]] = self.distanceMatrix[targetHolderSeed][holderCombinationForChange[0]]
-                                    self.totalDistances[neighbourHolder] += self.holdingWithSeedDistance[holderCombinationForChange[0]]
-                                self.globalChangables.pop(self.globalChangables.index(neighbourTargetFeatureId))
-                                self.seeds[holder].append(neighbourTargetFeatureId)
-                                holdersLocalTotalArea[holder] = holderNewTotalArea
-                                holdersLocalTotalArea[neighbourHolder] = neighbourNewTotalArea
-                                commitMessage = f'Change {str(self.counter)} for {neighbourTargetFeatureId} (holder:{neighbourHolder}) as neighbour of {seed} (holder:{holder}): {holderCombinationForChange} for {neighbourCombinationForChange}'
-                                logging.debug(commitMessage)
-                                feedback.pushInfo(commitMessage)
-                            else:
-                                #one to one change
-                                localChangables.pop(localChangables.index(neighbourTargetFeatureId))
-                                localChangables.pop(localChangables.index(holderCombinationForChange[0]))
-                                changesIds.append(holderCombinationForChange[0])
-                                changesIds.append(neighbourTargetFeatureId)
-                                self.globalChangables.pop(self.globalChangables.index(neighbourTargetFeatureId))
-                                self.seeds[holder].append(neighbourTargetFeatureId)
-                                self.totalDistances[holder] = self.totalDistances[holder] - self.holdingWithSeedDistance[holderCombinationForChange[0]] + self.distanceMatrix[seed][neighbourTargetFeatureId]
-                                if targetHolderSeed:
-                                    self.totalDistances[neighbourHolder] = self.totalDistances[neighbourHolder] - self.holdingWithSeedDistance[neighbourTargetFeatureId] + self.distanceMatrix[targetHolderSeed][holderCombinationForChange[0]]
-                                self.holdingWithSeedDistance[neighbourTargetFeatureId] = self.distanceMatrix[seed][neighbourTargetFeatureId]
-                                if targetHolderSeed:
-                                    self.holdingWithSeedDistance[holderCombinationForChange[0]] = self.distanceMatrix[targetHolderSeed][holderCombinationForChange[0]]
-                                else:
-                                    if self.useSingle:
-                                        self.holdingWithSeedDistance[holderCombinationForChange[0]] = self.distanceMatrix[neighbourTargetFeatureId][holderCombinationForChange[0]]
-                                holdersLocalTotalArea[holder] = holderNewTotalArea
-                                holdersLocalTotalArea[neighbourHolder] = neighbourNewTotalArea
-                                commitMessage = f'Change {str(self.counter)} for {neighbourTargetFeatureId} (holder:{neighbourHolder}) as neighbour of {seed} (holder:{holder}): {holderCombinationForChange} for {neighbourCombinationForChange}'
-                                logging.debug(commitMessage)
-                                feedback.pushInfo(commitMessage)
+                                self.interactionTable[neighbourHolder][holder] += 1    
+                            vgle_utils.update_areas_and_distances(self, holder, neighbourHolder, holderCombinationForChange, neighbourCombinationForChange, seed, targetHolderSeed, localChangables, layer)
+                            commitMessage = f'Change {self.counter} for {neighbourCombinationForChange} (holder:{neighbourHolder}) to get neighbour of {seed} (holder:{holder}): ' \
+                                            f'{holderCombinationForChange} for {neighbourCombinationForChange}'
+                            logging.debug(commitMessage)
+                            feedback.pushInfo(commitMessage)
+
+                            holdersLocalTotalArea[holder] = holderNewTotalArea
+                            holdersLocalTotalArea[neighbourHolder] = neighbourNewTotalArea                            
                 not_changables.extend(changesIds)
 
         if turn == 1:
@@ -440,119 +356,73 @@ def closer(self, layer, feedback, seeds=None, totalAreas=None):
 
             for tempTargetHolder in targetHolders:
                 targetHolderSeed = self.seeds[tempTargetHolder]
-                if len(targetHolderSeed) > 0:                  
-                    targetHolderSeed = self.seeds[tempTargetHolder][0]
-                    filteredLocalTargetHoldings = [hold for hold in self.holdersWithHoldings[tempTargetHolder] if
-                                                    hold in filteredLocalChangables and hold != targetHolderSeed]
+                
+                if not targetHolderSeed:
+                    if self.useSingle:
+                        if self.onlySelected:
+                            if tempTargetHolder not in self.selectedHolders:
+                                continue
+                        else:
+                            filteredLocalTargetHoldings = [hold for hold in self.holdersWithHoldings[tempTargetHolder] if
+                                                        hold in filteredLocalChangables]
+                    else:
+                        continue
 
-                    goodCombinations = []
-                    combTurn = 0
-                    for sortedCombination in vgle_utils.combine_with_constant_in_all(filteredLocalTargetHoldings):
-                        if self.simply:
-                            if combTurn < maxCombTurn:
-                                combTurn += 1
+                targetHolderSeed = self.seeds[tempTargetHolder][0]
+                filteredLocalTargetHoldings = [hold for hold in self.holdersWithHoldings[tempTargetHolder] if
+                                                hold in filteredLocalChangables and hold != targetHolderSeed]
+
+                goodCombinations = []
+                combTurn = 0
+                for sortedCombination in vgle_utils.combine_with_constant_in_all(filteredLocalTargetHoldings):
+                    if self.simply:
+                        if combTurn < maxCombTurn:
+                            combTurn += 1
+                        else:
+                            break
+
+                    for holderCombination in vgle_utils.combine_with_constant_in_all(filteredHolderHoldingsIds):
+                        targetMaxDistance = vgle_features.maxDistance(self, sortedCombination, targetHolderSeed, layer)
+                        holderMaxDistance = vgle_features.maxDistance(self, holderCombination, seed, layer)
+                        targetCloser = vgle_utils.isCloser(self, holderMaxDistance, sortedCombination, seed, holder, layer)
+                        holderCloser = vgle_utils.isCloser(self, targetMaxDistance, holderCombination, targetHolderSeed, tempTargetHolder, layer)
+                        if not targetCloser or not holderCloser:
+                            continue
+
+                        targetAvgDistanceOld = vgle_features.avgDistance(self, sortedCombination, targetHolderSeed, layer)
+                        holderAvgDistanceOld = vgle_features.avgDistance(self, holderCombination, seed, layer)
+                        holderAvgDistanceNew = vgle_features.avgDistance(self, sortedCombination, seed, layer)
+                        targetAvgDistanceNew = vgle_features.avgDistance(self, holderCombination, targetHolderSeed, layer)                           
+                        if (targetAvgDistanceNew < targetAvgDistanceOld) and (holderAvgDistanceNew < holderAvgDistanceOld):
+                            goodCombinations.append((holderCombination, sortedCombination))                                   
+
+                if goodCombinations:
+                    for holderCombination, targetCombination in goodCombinations:
+                        newHolderTotalArea = holderTotalArea - vgle_utils.calculateCombinationArea(self, holderCombination) + vgle_utils.calculateCombinationArea(self, targetCombination)
+                        if not vgle_utils.checkTotalAreaThreshold(self, newHolderTotalArea, holder):
+                            continue
+                        newTargetTotalArea = holdersLocalTotalArea[tempTargetHolder] - vgle_utils.calculateCombinationArea(self, targetCombination) + vgle_utils.calculateCombinationArea(self, holderCombination)
+                        if not vgle_utils.checkTotalAreaThreshold(self, newTargetTotalArea, tempTargetHolder):
+                            continue
+                        localMeasure = sum([vgle_utils.calculateCompositeNumber(self, seed, tempId) for tempId in holderCombination])
+                        holderNewHoldignNum = self.holdersHoldingNumber[holder] - len(holderCombination) + len(targetCombination)
+                        targetNewHoldingNum = self.holdersHoldingNumber[tempTargetHolder] - len(targetCombination) + len(holderCombination)
+                        if holderNewHoldignNum <= self.holdersHoldingNumber[holder] and targetNewHoldingNum <= self.holdersHoldingNumber[tempTargetHolder]:
+                            if not measure:
+                                targetHolder = copy.copy(tempTargetHolder)
+                                tempHolderCombination = copy.copy(holderCombination)
+                                tempTargetCombination = copy.copy(targetCombination)
+                                measure = copy.copy(localMeasure)
+                                tempHolderTotalArea = copy.copy(newHolderTotalArea)
+                                tempTargetTotalArea = copy.copy(newTargetTotalArea)
                             else:
-                                break
-
-                        for holderCombination in vgle_utils.combine_with_constant_in_all(filteredHolderHoldingsIds):
-                            targetMaxDistance = vgle_features.maxDistance(self, sortedCombination, targetHolderSeed, layer)
-                            holderMaxDistance = vgle_features.maxDistance(self, holderCombination, seed, layer)
-                            targetCloser = vgle_utils.isCloser(self, holderMaxDistance, sortedCombination, seed, holder)
-                            holderCloser = vgle_utils.isCloser(self, targetMaxDistance, holderCombination, targetHolderSeed, tempTargetHolder)
-                            if not targetCloser or not holderCloser:
-                                continue
-
-                            targetAvgDistanceOld = vgle_features.avgDistance(self, sortedCombination, targetHolderSeed, layer)
-                            holderAvgDistanceOld = vgle_features.avgDistance(self, holderCombination, seed, layer)
-                            holderAvgDistanceNew = vgle_features.avgDistance(self, sortedCombination, seed, layer)
-                            targetAvgDistanceNew = vgle_features.avgDistance(self, holderCombination, targetHolderSeed, layer)                           
-                            if (targetAvgDistanceNew < targetAvgDistanceOld) and (holderAvgDistanceNew < holderAvgDistanceOld):
-                                goodCombinations.append((holderCombination, sortedCombination))                                   
-
-                    if goodCombinations:
-                        for holderCombination, targetCombination in goodCombinations:
-                            newHolderTotalArea = holderTotalArea - vgle_utils.calculateCombinationArea(self, holderCombination) + vgle_utils.calculateCombinationArea(self, targetCombination)
-                            if not vgle_utils.checkTotalAreaThreshold(self, newHolderTotalArea, holder):
-                                continue
-                            newTargetTotalArea = holdersLocalTotalArea[tempTargetHolder] - vgle_utils.calculateCombinationArea(self, targetCombination) + vgle_utils.calculateCombinationArea(self, holderCombination)
-                            if not vgle_utils.checkTotalAreaThreshold(self, newTargetTotalArea, tempTargetHolder):
-                                continue
-                            localMeasure = sum([vgle_utils.calculateCompositeNumber(self, seed, tempId) for tempId in holderCombination])
-                            holderNewHoldignNum = self.holdersHoldingNumber[holder] - len(holderCombination) + len(targetCombination)
-                            targetNewHoldingNum = self.holdersHoldingNumber[tempTargetHolder] - len(targetCombination) + len(holderCombination)
-                            if holderNewHoldignNum <= self.holdersHoldingNumber[holder] and targetNewHoldingNum <= self.holdersHoldingNumber[tempTargetHolder]:
-                                if not measure:
+                                if measure < localMeasure:
                                     targetHolder = copy.copy(tempTargetHolder)
                                     tempHolderCombination = copy.copy(holderCombination)
                                     tempTargetCombination = copy.copy(targetCombination)
                                     measure = copy.copy(localMeasure)
                                     tempHolderTotalArea = copy.copy(newHolderTotalArea)
                                     tempTargetTotalArea = copy.copy(newTargetTotalArea)
-                                else:
-                                    if measure < localMeasure:
-                                        targetHolder = copy.copy(tempTargetHolder)
-                                        tempHolderCombination = copy.copy(holderCombination)
-                                        tempTargetCombination = copy.copy(targetCombination)
-                                        measure = copy.copy(localMeasure)
-                                        tempHolderTotalArea = copy.copy(newHolderTotalArea)
-                                        tempTargetTotalArea = copy.copy(newTargetTotalArea)
-                else:
-                    if self.useSingle:
-                        if self.onlySelected:
-                            if tempTargetHolder not in self.selectedHolders:
-                                continue
-                        filteredLocalTargetHoldings = [hold for hold in self.holdersWithHoldings[tempTargetHolder] if
-                                                        hold in filteredLocalChangables]
-                        
-                        goodCombinations = []
-                        combTurn = 0
-                        for sortedCombination in vgle_utils.combine_with_constant_in_all(filteredLocalTargetHoldings):
-                            if self.simply:
-                                if combTurn < maxCombTurn:
-                                    combTurn += 1
-                                else:
-                                    break
-        
-                            for holderCombination in vgle_utils.combine_with_constant_in_all(filteredHolderHoldingsIds):
-                                holderMaxDistance = vgle_features.maxDistance(self, holderCombination, seed, layer)
-                                targetCloser = vgle_utils.isCloser(self, holderMaxDistance, sortedCombination, seed, holder)
-                                if not targetCloser:
-                                    continue
-
-                                holderAvgDistanceOld = vgle_features.avgDistance(self, holderCombination, seed, layer)
-                                holderAvgDistanceNew = vgle_features.avgDistance(self, sortedCombination, seed, layer)
-                                if holderAvgDistanceNew < holderAvgDistanceOld:
-                                    goodCombinations.append((holderCombination, sortedCombination))                                    
-
-                        if goodCombinations:
-                            for index, goodCombination in goodCombinations:
-                                holderCombination, targetCombination = goodCombination
-                                newHolderTotalArea = holderTotalArea - vgle_utils.calculateCombinationArea(self, holderCombination) + vgle_utils.calculateCombinationArea(self, targetCombination)
-                                if not vgle_utils.checkTotalAreaThreshold(self, newHolderTotalArea, holder):
-                                    continue
-                                newTargetTotalArea = holdersLocalTotalArea[tempTargetHolder] - vgle_utils.calculateCombinationArea(self, targetCombination) + vgle_utils.calculateCombinationArea(self, holderCombination)
-                                if vgle_utils.checkTotalAreaThreshold(self, newTargetTotalArea, tempTargetHolder):
-                                    continue
-                                
-                                localMeasure = sum([vgle_utils.calculateCompositeNumber(self, seed, tempId) for tempId in holderCombination])
-                                holderNewHoldignNum = self.holdersHoldingNumber[holder] - len(holderCombination) + len(targetCombination)
-                                targetNewHoldingNum = self.holdersHoldingNumber[tempTargetHolder] - len(targetCombination) + len(holderCombination)
-                                if holderNewHoldignNum <= self.holdersHoldingNumber[holder] and targetNewHoldingNum <= self.holdersHoldingNumber[tempTargetHolder]:
-                                    if not measure:
-                                        targetHolder = copy.copy(tempTargetHolder)
-                                        tempHolderCombination = copy.copy(holderCombination)
-                                        tempTargetCombination = copy.copy(targetCombination)
-                                        measure = copy.copy(localMeasure)
-                                        tempHolderTotalArea = copy.copy(newHolderTotalArea)
-                                        tempTargetTotalArea = copy.copy(newTargetTotalArea)
-                                    else:
-                                        if measure < localMeasure:
-                                            targetHolder = copy.copy(tempTargetHolder)
-                                            tempHolderCombination = copy.copy(holderCombination)
-                                            tempTargetCombination = copy.copy(targetCombination)
-                                            measure = copy.copy(localMeasure)
-                                            tempHolderTotalArea = copy.copy(newHolderTotalArea)
-                                            tempTargetTotalArea = copy.copy(newTargetTotalArea)
 
             if measure:
                 targetHolderSeed = self.seeds[targetHolder]
@@ -561,81 +431,25 @@ def closer(self, layer, feedback, seeds=None, totalAreas=None):
                 elif len(targetHolderSeed) == 0:
                     if self.useSingle:
                         targetHolderSeed = filteredLocalTargetHoldings[0]
-                tempHolderCombination = list(tempHolderCombination)
-                tempTargetCombination = list(tempTargetCombination)
-                vgle_layers.setAttributeValues(self, layer, holder, targetHolder, tempHolderCombination, tempTargetCombination)
-                if self.stats:
-                    self.interactionTable[holder][targetHolder] += 1
-                    self.interactionTable[targetHolder][holder] += 1
-                if len(tempHolderCombination) > 1 and len(tempTargetCombination) > 1:
-                    #many to many change
-                    for hold in tempHolderCombination:
-                        localChangables.pop(localChangables.index(hold))
-                        self.totalDistances[holder] = self.totalDistances[holder] - self.holdingWithSeedDistance[hold]
-                        self.holdingWithSeedDistance[hold] = self.distanceMatrix[targetHolderSeed][hold]
-                        self.totalDistances[targetHolder] += self.holdingWithSeedDistance[hold]
-                    for ch in tempTargetCombination:
-                        localChangables.pop(localChangables.index(ch))
-                        self.totalDistances[targetHolder] = self.totalDistances[targetHolder] - self.holdingWithSeedDistance[ch]
-                        self.holdingWithSeedDistance[ch] = self.distanceMatrix[seed][ch]
-                        self.totalDistances[holder] += self.holdingWithSeedDistance[ch]
-                    holdersLocalTotalArea[holder] = tempHolderTotalArea
-                    holdersLocalTotalArea[targetHolder] = tempTargetTotalArea
-                    commitMessage = f'Change {str(self.counter)} for {tempTargetCombination} (holder:{targetHolder}) to get closer to {seed} (holder:{holder}): {tempHolderCombination} for {tempTargetCombination}'
+                    else:
+                        targetHolderSeed = None
+                    
+                if targetHolderSeed:
+                    tempHolderCombination = list(tempHolderCombination)
+                    tempTargetCombination = list(tempTargetCombination)
+                    vgle_layers.setAttributeValues(self, layer, holder, targetHolder, tempHolderCombination, tempTargetCombination)
+                    if self.stats:
+                        self.interactionTable[holder][targetHolder] += 1
+                        self.interactionTable[targetHolder][holder] += 1
+                    
+                    vgle_utils.update_areas_and_distances(self, holder, targetHolder, tempHolderCombination, tempTargetCombination, seed, targetHolderSeed, localChangables, layer)
+                    commitMessage = f'Change {self.counter} for {tempTargetCombination} (holder:{targetHolder}) to get closer to {seed} (holder:{holder}): ' \
+                                    f'{tempHolderCombination} for {tempTargetCombination}'
                     logging.debug(commitMessage)
                     feedback.pushInfo(commitMessage)
-                elif len(tempHolderCombination) > 1 and len(tempTargetCombination) == 1 or len(tempHolderCombination) == 1 and len(tempTargetCombination) > 1:
-                    #many to one change
-                    if len(tempHolderCombination) > 1:
-                        for hold in tempHolderCombination:
-                            localChangables.pop(localChangables.index(hold))
-                            self.totalDistances[holder] = self.totalDistances[holder] - self.holdingWithSeedDistance[hold]
-                            if targetHolderSeed:
-                                self.holdingWithSeedDistance[hold] = self.distanceMatrix[targetHolderSeed][hold]
-                            else:
-                                if self.useSingle:
-                                    self.holdingWithSeedDistance[hold] = self.distanceMatrix[tempTargetCombination[0]][hold]
-                            self.totalDistances[targetHolder] += self.holdingWithSeedDistance[hold]
-                        localChangables.pop(localChangables.index(tempTargetCombination[0]))
-                        self.totalDistances[targetHolder] = self.totalDistances[targetHolder] - self.holdingWithSeedDistance[tempTargetCombination[0]]
-                        self.holdingWithSeedDistance[tempTargetCombination[0]] = self.distanceMatrix[seed][tempTargetCombination[0]]
-                        self.totalDistances[holder] += self.holdingWithSeedDistance[tempTargetCombination[0]]
-                        commitMessage = f'Change {str(self.counter)} for {tempTargetCombination} (holder:{targetHolder}) to get closer to {seed} (holder:{holder}): {tempHolderCombination} for {tempTargetCombination[0]}'
-                        logging.debug(commitMessage)
-                        feedback.pushInfo(commitMessage)
-                    else:
-                        for ch in tempTargetCombination:
-                            localChangables.pop(localChangables.index(ch))
-                            self.totalDistances[targetHolder] = self.totalDistances[targetHolder] - self.holdingWithSeedDistance[ch] 
-                            self.holdingWithSeedDistance[ch] = self.distanceMatrix[seed][ch]
-                            self.totalDistances[holder] += self.holdingWithSeedDistance[ch]
-                        localChangables.pop(localChangables.index(tempHolderCombination[0]))
-                        self.totalDistances[holder] = self.totalDistances[holder] - self.holdingWithSeedDistance[tempHolderCombination[0]]
-                        self.holdingWithSeedDistance[tempHolderCombination[0]] = self.distanceMatrix[targetHolderSeed][tempHolderCombination[0]]
-                        self.totalDistances[targetHolder] += self.holdingWithSeedDistance[tempHolderCombination[0]]
-                        commitMessage = f'Change {str(self.counter)} for {tempTargetCombination} (holder:{targetHolder}) to get closer to {seed} (holder:{holder}): {tempHolderCombination[0]} for {tempTargetCombination}'
-                        logging.debug(commitMessage)
-                        feedback.pushInfo(commitMessage)
+
                     holdersLocalTotalArea[holder] = tempHolderTotalArea
-                    holdersLocalTotalArea[targetHolder] = tempTargetTotalArea
-                else:
-                    #one to one change
-                    localChangables.pop(localChangables.index(tempTargetCombination[0]))
-                    localChangables.pop(localChangables.index(tempHolderCombination[0]))
-                    self.totalDistances[holder] = self.totalDistances[holder] - self.holdingWithSeedDistance[tempHolderCombination[0]] + self.distanceMatrix[seed][tempTargetCombination[0]]
-                    if targetHolderSeed:
-                        self.totalDistances[targetHolder] = self.totalDistances[targetHolder] - self.holdingWithSeedDistance[tempTargetCombination[0]] + self.distanceMatrix[targetHolderSeed][tempHolderCombination[0]]
-                    self.holdingWithSeedDistance[tempTargetCombination[0]] = self.distanceMatrix[seed][tempTargetCombination[0]]
-                    if targetHolderSeed:
-                        self.holdingWithSeedDistance[tempHolderCombination[0]] = self.distanceMatrix[targetHolderSeed][tempHolderCombination[0]]
-                    else:
-                        if self.useSingle:
-                            self.holdingWithSeedDistance[tempHolderCombination[0]] = self.distanceMatrix[tempTargetCombination[0]][tempHolderCombination[0]]
-                    holdersLocalTotalArea[holder] = tempHolderTotalArea
-                    holdersLocalTotalArea[targetHolder] = tempTargetTotalArea
-                    commitMessage = f'Change {str(self.counter)} for {tempTargetCombination[0]} (holder:{targetHolder}) to get closer to {seed} (holder:{holder}): {tempHolderCombination[0]} for {tempTargetCombination[0]}'
-                    logging.debug(commitMessage)
-                    feedback.pushInfo(commitMessage)
+                    holdersLocalTotalArea[targetHolder] = tempTargetTotalArea    
 
         if feedback.isCanceled():
             vgle_utils.endLogging() 
@@ -778,22 +592,17 @@ def hybrid_method(self, layer, feedback):
                         targetMaxDistance = vgle_features.maxDistance(self, targetCombination, targetHolderSeed, layer)
                         holderMaxDistance = vgle_features.maxDistance(self, holderCombination, seed, layer)
 
-                        if not (vgle_utils.isCloser(self, holderMaxDistance, targetCombination, seed, holder) and
-                                vgle_utils.isCloser(self, targetMaxDistance, holderCombination, targetHolderSeed, tempTargetHolder)):
+                        if not (vgle_utils.isCloser(self, holderMaxDistance, targetCombination, seed, holder, layer) and
+                                vgle_utils.isCloser(self, targetMaxDistance, holderCombination, targetHolderSeed, tempTargetHolder, layer)):
                             continue
 
                         # Average distance check
-
                         targetAvgDistanceOld = vgle_features.avgDistance(self, targetCombination, targetHolderSeed, layer)
                         holderAvgDistanceOld = vgle_features.avgDistance(self, holderCombination, seed, layer)
                         holderAvgDistanceNew = vgle_features.avgDistance(self, targetCombination, seed, layer)
                         targetAvgDistanceNew = vgle_features.avgDistance(self, holderCombination, targetHolderSeed, layer)
 
                         if not (targetAvgDistanceNew < targetAvgDistanceOld) and not (holderAvgDistanceNew < holderAvgDistanceOld):
-                            continue
-
-                        # Shape check
-                        if not vgle_features.checkShape(self, layer, seed, holdings, holderCombination, targetCombination):
                             continue
 
                         # Total area check
@@ -808,6 +617,9 @@ def hybrid_method(self, layer, feedback):
                         score = sum([vgle_utils.calculateCompositeNumber(self, seed, tempId) for tempId in holderCombination])
 
                         if not bestCombination or score > bestCombination[0]:
+                            # Shape check
+                            #if not vgle_features.checkShape(self, layer, seed, holdings, holderCombination, targetCombination):
+                            #    continue
                             bestCombination = (copy.copy(score),
                                                copy.copy(tempTargetHolder),
                                                copy.copy(targetCombination),
