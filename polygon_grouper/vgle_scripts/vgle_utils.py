@@ -174,6 +174,8 @@ def createDistanceMatrix(self, layer, nearestPoints=0, simply=False):
     #INPUTS:
     #        layer: QgsVectorLayer
     #OUTPUTS: Dictionary, key: holding id, values: Distionary (nested), key: holding ids, values: Float, distances
+    #import ptvsd
+    #ptvsd.debug_this_thread()
     algParams = {
         'INPUT': layer,
         'ALL_PARTS': False,
@@ -287,15 +289,20 @@ def calculateTotalDistances(self, layer):
             except IndexError:
                 continue
         else:
-            seed = self.seeds[holder][0]
+            try:
+                seed = self.seeds[holder][0]
+            except IndexError:
+                seed = None
         sumDistance = 0
         for holding in holdings:
+            distance = 0
             try:
                 distance = self.distanceMatrix[seed][holding]
                 sumDistance += distance
             except KeyError:
-                distance = vgle_features.calculateDistance(self, holding, seed, layer)
-                sumDistance += distance
+                if seed:
+                    distance = vgle_features.calculateDistance(self, holding, seed, layer)
+                    sumDistance += distance
             holdingWithSeedDistance[holding] = distance
         totalDistances[holder] = sumDistance
     

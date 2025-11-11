@@ -151,7 +151,8 @@ def neighbours(self, layer, feedback, totalAreas=None):
                                 if combTurn > 10000*combinationLenght and lenTurn > 20000:
                                     break
                             for neighbourCombination in neighbourHoldingsCombinations:                
-                                lenTurn += 1            
+                                lenTurn += 1  
+                                combTurn += 1            
                                 temporaryHolderArea = vgle_utils.calculateCombinationArea(self, combination)                             
                                 if self.strict:
                                     # Distance conditions
@@ -196,7 +197,6 @@ def neighbours(self, layer, feedback, totalAreas=None):
                                                 holderNewTotalArea = newHolderTotalArea
                                                 neighbourNewTotalArea = newNeighbourTotalArea
                                                 totalAreaDifference = difference
-                                                combTurn += 1
                                         else:
                                             if thresholdHolder and thresholdNeighbour and difference < totalAreaDifference:
                                                 holderNewHoldignNum = self.holdersHoldingNumber[holder] - len(combination) + len(neighbourCombination)
@@ -208,8 +208,7 @@ def neighbours(self, layer, feedback, totalAreas=None):
                                                 neighbourCombinationForChange = neighbourCombination
                                                 holderNewTotalArea = newHolderTotalArea
                                                 neighbourNewTotalArea = newNeighbourTotalArea
-                                                totalAreaDifference = difference
-                                                combTurn += 1   
+                                                totalAreaDifference = difference 
 
                         if holderCombinationForChange and neighbourCombinationForChange:       
                             vgle_layers.setAttributeValues(self, layer, holder, neighbourHolder, holderCombinationForChange, neighbourCombinationForChange)
@@ -619,8 +618,8 @@ def hybrid_method(self, layer, feedback):
 
                         if not bestCombination or score > bestCombination[0]:
                             # Shape check
-                            if not vgle_features.checkShape(self, layer, seed, holdings, holderCombination, targetCombination):
-                                continue
+                            #if not vgle_features.checkShape(self, layer, seed, holdings, holderCombination, targetCombination):
+                            #    continue
                             bestCombination = (copy.copy(score),
                                                copy.copy(tempTargetHolder),
                                                copy.copy(targetCombination),

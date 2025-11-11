@@ -168,12 +168,18 @@ def avgDistance(self, featureIds, seed, layer=None):
     return sumDistance / divider
 
 def calculateDistance(self, featureId, seed, layer):
-    expression = f'"{self.idAttribute}" = \'{seed}\''
-    layer.selectByExpression(expression)
-    featureSeed = layer.selectedFeatures()[0]
-    expression = f'"{self.idAttribute}" = \'{featureId}\''
-    layer.selectByExpression(expression)
-    featureTarget = layer.selectedFeatures()[0]
+    try:
+        expression = f'"{self.idAttribute}" = \'{seed}\''
+        layer.selectByExpression(expression)
+        featureSeed = layer.selectedFeatures()[0]
+    except IndexError:
+        raise IndexError(QCoreApplication.translate("Polygon Grouper", "Seed feature with ID '{}' not found in the layer.".format(seed)))
+    try:
+        expression = f'"{self.idAttribute}" = \'{featureId}\''
+        layer.selectByExpression(expression)
+        featureTarget = layer.selectedFeatures()[0]
+    except IndexError:
+        raise IndexError(QCoreApplication.translate("Polygon Grouper", "Target feature with ID '{}' not found in the layer.".format(featureId)))
     # Get geometries of the features
     geometrySeed = featureSeed.geometry()
     geometryTarget = featureTarget.geometry()
