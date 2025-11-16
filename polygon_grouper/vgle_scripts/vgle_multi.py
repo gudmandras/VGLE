@@ -3,13 +3,16 @@ import re
 import platform
 import math
 import sys
+import traceback
 from multiprocessing import Pool
 
-from qgis.core import (QgsProject,
+from qgis.core import (QgsTask,
+                       QgsProject,
                        QgsApplication,
                        QgsVectorLayer,
-                       QgsFeatureRequest,
                        QgsVectorFileWriter)
+
+from . import vgle_utils, vgle_features, vgle_methods, vgle_layers
 
 def import_processing(prefix):
     QgsApplication.setPrefixPath(prefix, True)
@@ -103,15 +106,174 @@ def distance_matrix_process(input_centroids ,centroids, idAttribute):
 
     return matrix
 
-def neighbour_multi():
-    pass
+class NeighbourFunctionComparisonTask(QgsTask):
 
-def closer_multi():
-    pass
+    def __init__(self, name, holder, targetHolder, holderCombination, targetCombination, holderSeed, targetSeed, holderTotalArea, targetTotalArea, context, strict=False, useSingle=False, on_finished=None):
+        super().__init__(name, QgsTask.CanCancel)
+        self.holder = holder
+        self.targetHolder = targetHolder
+        self.holderCombination = holderCombination
+        self.targetCombination = targetCombination
+        self.holderSeed = holderSeed
+        self.targetSeed = targetSeed
+        self.holderTotalArea = holderTotalArea
+        self.targetTotalArea = targetTotalArea
+        self.context = context
+        self.strict = strict
+        self.useSingle = useSingle
+        self.on_finished = on_finished
+        self.result = None
+        self.difference = None
+        self.exception = None
+        #for attr, value in self.__dict__.items():
+        #    print(f"Attribute '{attr}': {repr(value)}\n")
 
-def hybrid_multi():
-    pass
+    def run(self):
+        """Here you implement your heavy lifting.
+        Should periodically test for isCanceled() to gracefully
+        abort.
+        This method MUST return True or False.
+        Raising exceptions will crash QGIS, so we handle them
+        internally and raise them in self.finished
+        """
+        try:
+            temporaryHolderArea = vgle_utils.calculateCombinationArea(self.context, self.holderCombination)                             
+            if self.strict:
+                # Distance conditions
+                holderMaxDistance = vgle_features.maxDistance(self.context, self.holderCombination, self.holderSeed)
+                holderAvgDistanceOld = vgle_features.avgDistance(self.context, self.holderCombination, self.holderSeed)
+                holderAvgDistanceNew = vgle_features.avgDistance(self.context, self.targetCombination, self.holderSeed)
+                if self.useSingle and not self.targetSeed :
+                    targetCloser = True
+                    targetAvgDistanceNew, targetAvgDistanceOld = 1,2
+                    targetMaxDistance = vgle_features.maxDistance(self.context, self.targetCombination, self.targetCombination[0])
+                    holderCloser = vgle_utils.isCloser(self.context, targetMaxDistance, self.holderCombination, self.targetSeed, self.targetHolder)
+                else:
+                    targetMaxDistance = vgle_features.maxDistance(self.context, self.targetCombination, self.targetSeed)
+                    targetAvgDistanceOld = vgle_features.avgDistance(self.context, self.targetCombination, self.targetSeed)
+                    targetAvgDistanceNew = vgle_features.avgDistance(self.context, self.holderCombination, self.targetSeed)
+                    targetCloser = vgle_utils.isCloser(self.context, holderMaxDistance, self.targetCombination, self.holderSeed, self.holder)
+                    holderCloser = vgle_utils.isCloser(self.context, targetMaxDistance, self.holderCombination, self.targetSeed, self.targetHolder)
+            else:
+                targetCloser, holderCloser = True, True
+                targetAvgDistanceNew, targetAvgDistanceOld = 1,2
+                holderAvgDistanceNew, holderAvgDistanceOld = 1,2
 
+            if self.isCanceled():
+                return False
+            
+            if targetCloser and holderCloser:
+                if (targetAvgDistanceNew < targetAvgDistanceOld) and (holderAvgDistanceNew < holderAvgDistanceOld):
+                    #Weight condition
+                    temporaryTargetArea = vgle_utils.calculateCombinationArea(self.context, self.targetCombination)
+                    newHolderTotalArea = self.holderTotalArea - temporaryHolderArea + temporaryTargetArea
+                    newNeighbourTotalArea = self.targetTotalArea - temporaryTargetArea + temporaryHolderArea
+                    thresholdHolder = vgle_utils.checkTotalAreaThreshold(self.context, newHolderTotalArea, self.holder)
+                    thresholdNeighbour = vgle_utils.checkTotalAreaThreshold(self.context, newNeighbourTotalArea, self.targetHolder )
+                    difference = abs(newHolderTotalArea-self.holderTotalArea)
+                    print(difference)
+                    if thresholdHolder and thresholdNeighbour:
+                        holderNewHoldignNum = self.context.holdersHoldingNumber[self.holder] - len(self.holderCombination) + len(self.targetCombination)
+                        targetNewHoldingNum = self.context.holdersHoldingNumber[self.targetHolder ] - len(self.targetCombination) + len( self.holderCombination)
+                        if self.strict:
+                            if holderNewHoldignNum > self.context.holdersHoldingNumber[self.holder] and targetNewHoldingNum > self.context.holdersHoldingNumber[self.targetHolder]:
+                                return False
+                        self.result = (self.holderCombination, self.targetCombination, newHolderTotalArea, newNeighbourTotalArea, difference)
+                        return True
+                    else:
+                        return False
+        except Exception as e:
+            self.exception = traceback.format_exc()
+            return False
+
+    def finished(self, result):
+        if self.on_finished:
+            if result is True:
+                self.on_finished(True, self.result)
+            else:
+                if self.exception:
+                    self.on_finished(False, self.exception)
+                else:
+                    self.on_finished(False, None)
+
+
+class CloserFunctionComparisonTask(QgsTask):
+
+    def __init__(self, name, holder, targetHolder, holderCombination, targetCombination, holderSeed, targetSeed, holderTotalArea, targetTotalArea, context, strict=False, useSingle=False, on_finished=None):
+        super().__init__(name, QgsTask.CanCancel)
+        self.holder = holder
+        self.targetHolder = targetHolder
+        self.holderCombination = holderCombination
+        self.targetCombination = targetCombination
+        self.holderSeed = holderSeed
+        self.targetSeed = targetSeed
+        self.holderTotalArea = holderTotalArea
+        self.targetTotalArea = targetTotalArea
+        self.context = context
+        self.strict = strict
+        self.useSingle = useSingle
+        self.on_finished = on_finished
+        self.result = None
+        self.difference = None
+        self.exception = None
+        #for attr, value in self.__dict__.items():
+        #    print(f"Attribute '{attr}': {repr(value)}\n")
+
+    def run(self):
+        """Here you implement your heavy lifting.
+        Should periodically test for isCanceled() to gracefully
+        abort.
+        This method MUST return True or False.
+        Raising exceptions will crash QGIS, so we handle them
+        internally and raise them in self.finished
+        """
+        try:
+            holderMaxDistance = vgle_features.maxDistance(self.context, self.holderCombination, self.holderSeed)
+            targetMaxDistance = vgle_features.maxDistance(self.context, self.targetCombination, self.targetSeed)
+            targetCloser = vgle_utils.isCloser(self.context, holderMaxDistance, self.targetCombination, self.holderSeed, self.holder)
+            holderCloser = vgle_utils.isCloser(self.context, targetMaxDistance, self.holderCombination, self.targetSeed, self.targetHolder)
+            
+            if not targetCloser or not holderCloser:
+                return False
+            
+            holderAvgDistanceOld = vgle_features.avgDistance(self.context, self.holderCombination, self.holderSeed)
+            holderAvgDistanceNew = vgle_features.avgDistance(self.context, self.targetCombination, self.holderSeed)
+            targetAvgDistanceOld = vgle_features.avgDistance(self.context, self.targetCombination, self.targetSeed)
+            targetAvgDistanceNew = vgle_features.avgDistance(self.context, self.holderCombination, self.targetSeed)
+
+            if (targetAvgDistanceNew >= targetAvgDistanceOld) or (holderAvgDistanceNew >= holderAvgDistanceOld):
+                return False
+
+            if self.isCanceled():
+                return False
+
+            newHolderTotalArea = self.holderTotalArea - vgle_utils.calculateCombinationArea(self.context, self.holderCombination) + vgle_utils.calculateCombinationArea(self.context,  self.targetCombination)
+            if not vgle_utils.checkTotalAreaThreshold(self.context, newHolderTotalArea, self.holder):
+                return False
+            newTargetTotalArea =  self.targetTotalArea - vgle_utils.calculateCombinationArea(self.context, self.targetCombination) + vgle_utils.calculateCombinationArea(self.context, self.holderCombination)
+            if not vgle_utils.checkTotalAreaThreshold(self.context, newTargetTotalArea, self.targetHolder):
+                return False
+            localMeasure = sum([vgle_utils.calculateCompositeNumber(self.context, self.holderSeed, tempId) for tempId in self.holderCombination])
+            holderNewHoldingNum = self.context.holdersHoldingNumber[self.holder] - len(self.holderCombination) + len(self.targetCombination)
+            targetNewHoldingNum = self.context.holdersHoldingNumber[self.targetHolder] - len(self.targetCombination) + len(self.holderCombination)
+            if holderNewHoldingNum <= self.context.holdersHoldingNumber[self.holder] and targetNewHoldingNum <= self.context.holdersHoldingNumber[self.targetHolder]:
+                self.result = (self.holderCombination, self.targetCombination, newHolderTotalArea, newTargetTotalArea, localMeasure)
+                return True
+            else:
+                return False
+        except Exception as e:
+            self.exception = traceback.format_exc()
+            return False
+
+    def finished(self, result):
+        if self.on_finished:
+            if result is True:
+                self.on_finished(True, self.result)
+            else:
+                if self.exception:
+                    self.on_finished(False, self.exception)
+                else:
+                    self.on_finished(False, None)
 
 if __name__ == "__main__":
     try:

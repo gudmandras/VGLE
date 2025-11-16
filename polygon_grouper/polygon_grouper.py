@@ -85,7 +85,6 @@ class vgle(object):
             'i18n',
             'vgle_{}.qm'.format(locale))
 
-
         if os.path.exists(locale_path):
             self.translator = QTranslator()
             self.translator.load(locale_path)

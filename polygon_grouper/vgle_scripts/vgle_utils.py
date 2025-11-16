@@ -199,7 +199,7 @@ def createDistanceMatrix(self, layer, nearestPoints=0, simply=False):
 
         tree = cKDTree(points_A)
 
-        results = tree.query_ball_point(points_A, r=self.distance)
+        results = tree.query_ball_point(points_A, r=len(points))
 
         for i, result in enumerate(results):
             distanceMatrix[fids[i]] = {}

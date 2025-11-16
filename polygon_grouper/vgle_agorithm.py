@@ -113,7 +113,7 @@ class PolygonGrouper(QgsProcessingAlgorithm):
         feedback = QgsProcessingMultiStepFeedback(self.steps, model_feedback)
 
         if parameters['OnlySelected'] and parameters['Preference'] is not True:
-            feedback.pushInfo(f"'Only use the selected features' parameters works only with "
+            feedback.reportError(f"'Only use the selected features' parameters works only with "
                               f"'Give preference for the selected features parameter'. "
                               f"'Give preference for the selected features parameter' is enabled")
             parameters['Preference'] = True
@@ -174,7 +174,9 @@ class PolygonGrouper(QgsProcessingAlgorithm):
             self.filteredDistanceMatrix = vgle_utils.filterDistanceMatrix(self.distance, self.distanceMatrix)
         feedback.pushInfo('Distance matrix calculated')
 
+        feedback.pushInfo('Calculate total distances')
         self.totalDistances, self.holdingWithSeedDistance = vgle_utils.calculateTotalDistances(self, layer)
+        feedback.pushInfo('Total distances calculated')
 
         if parameters['Stats']:
             beforeData = vgle_utils.calculateStatData(self, layer, self.holderAttribute)

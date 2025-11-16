@@ -6,6 +6,8 @@ __revision__ = '$Format:%H$'
 
 from qgis.core import QgsProcessingProvider
 from .vgle_agorithm import PolygonGrouper
+from .vgle_scripts.bottomup import BottomUpAlgorithm
+from .vgle_scripts.topdown import TopDownAlgorithm
 from qgis.PyQt.QtGui import QIcon
 import os, inspect
 
@@ -31,6 +33,8 @@ class PolygonGrouperProvider(QgsProcessingProvider):
         #import ptvsd
         #ptvsd.debug_this_thread()
         self.addAlgorithm(PolygonGrouper())
+        self.addAlgorithm(BottomUpAlgorithm())
+        self.addAlgorithm(TopDownAlgorithm())
 
     def id(self):
         """
