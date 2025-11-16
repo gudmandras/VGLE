@@ -2,6 +2,7 @@ import copy
 import itertools
 import logging
 import random
+import os
 
 from . import vgle_utils, vgle_layers, vgle_features, vgle_multi
 from qgis.core import QgsApplication
@@ -21,7 +22,7 @@ def neighbours(self, layer, feedback, totalAreas=None):
     #import ptvsd
     #ptvsd.debug_this_thread()
     maxCombTurn = 20000
-    MAX_PARALLEL = 10
+    MAX_PARALLEL =  os.cpu_count() - 2
     changes = 1
     changer = True
     self.globalChangables = vgle_utils.getChangableHoldings(self)
@@ -267,7 +268,7 @@ def closer(self, layer, feedback, seeds=None, totalAreas=None):
     #import ptvsd
     #ptvsd.debug_this_thread()
     maxCombTurn = 20000
-    MAX_PARALLEL = 10
+    MAX_PARALLEL = os.cpu_count() - 2
     changes = 1
     changer = True
     self.globalChangables = vgle_utils.getChangableHoldings(self)
@@ -686,5 +687,6 @@ def hybrid_method(self, layer, feedback):
                 vgle_features.filterTouchingFeatures(self, layer)
         feedback.setCurrentStep(1+turn)
         feedback.pushInfo('Save turn results to the file')
+
 
     return layer
