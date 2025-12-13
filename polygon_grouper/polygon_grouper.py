@@ -74,7 +74,7 @@ class vgle(object):
         :type iface: QgsInterface
         """
         self.provider = None
-        enable_remote_debugging()
+        #enable_remote_debugging()
         # Save reference to the QGIS interface
         self.iface = iface
         # initialize plugin directory
