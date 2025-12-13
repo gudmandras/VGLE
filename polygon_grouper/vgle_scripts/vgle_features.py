@@ -168,6 +168,7 @@ def avgDistance(self, featureIds, seed, layer=None):
     return sumDistance / divider
 
 def calculateDistance(self, featureId, seed, layer):
+    print('Some distance not found in matrix, calculating distance between', seed, 'and', featureId)
     try:
         expression = f'"{self.idAttribute}" = \'{seed}\''
         layer.selectByExpression(expression)
@@ -189,8 +190,6 @@ def calculateDistance(self, featureId, seed, layer):
 
     return distance
     
-
-
 def filterTouchingFeatures(self, layer, toSeed=False):
     """
     DESCRIPTION: Determine, if a holder holding touches its seed polygon. If true, filter it, from the changables,

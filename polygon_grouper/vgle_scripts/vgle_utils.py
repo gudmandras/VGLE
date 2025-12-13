@@ -185,8 +185,9 @@ def createDistanceMatrix(self, layer, nearestPoints=0, simply=False):
 
     if simply and not nearestPoints:
         import numpy as np
+        import json
         from scipy.spatial import cKDTree
-        distanceMatrix = {}
+        distanceMatrix2 = {}
         points = []
         fids = []
 
@@ -199,15 +200,20 @@ def createDistanceMatrix(self, layer, nearestPoints=0, simply=False):
 
         tree = cKDTree(points_A)
 
-        results = tree.query_ball_point(points_A, r=len(points))
+        bbox = layer.extent()
+        width = bbox.width()
+        height = bbox.height()
+        diagonal = math.sqrt(width**2 + height**2)
+
+        results = tree.query_ball_point(points_A, r=diagonal)
 
         for i, result in enumerate(results):
-            distanceMatrix[fids[i]] = {}
+            distanceMatrix2[fids[i]] = {}
             for j in result:
                 if i == j:
                     continue
                 dist = np.linalg.norm(points_A[i] - points_A[j])
-                distanceMatrix[fids[i]][fids[j]] = dist
+                distanceMatrix2[fids[i]][fids[j]] = dist
         del points_A, tree, results
         return distanceMatrix
     
@@ -245,9 +251,12 @@ def createDistanceMatrix(self, layer, nearestPoints=0, simply=False):
             tempDict = {}
             for field in names:
                 value = feature.attribute(field)
-                tempDict[field] = value
+                if field != 'ID':
+                    tempDict[field] = value
             distanceMatrix[feature.attribute('ID')] = tempDict
 
+    #with open(r'd:\Job\GOPA\2_term\GIS_data\distance_matrix\qgis_matrix.json', 'w') as f:
+    #    json.dump(distanceMatrix, f, indent=4)
     return distanceMatrix
 
 def filterDistanceMatrix(distance, distanceMatrix):
@@ -269,6 +278,17 @@ def filterDistanceMatrix(distance, distanceMatrix):
                 break
         filteredMatrix[key] = subFilteredMatrix
     return filteredMatrix
+
+def extendDistanceMatrix(self, layer, firstIds, secondIds):
+    for firstId in firstIds:
+        for secondId in secondIds:
+            try:
+                distance = self.distanceMatrix[firstId][secondId]
+            except KeyError:
+                distance = vgle_features.calculateDistance(self, firstId, secondId, layer)
+                self.distanceMatrix[secondId][firstId] = distance
+
+    return self
 
 
 def calculateTotalDistances(self, layer):

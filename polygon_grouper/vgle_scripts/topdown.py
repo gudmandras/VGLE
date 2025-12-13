@@ -1,11 +1,14 @@
 import random, tempfile, time, os, shutil
 from datetime import datetime
 
-from qgis.PyQt.QtCore import QCoreApplication, QSettings
+from qgis.PyQt.QtCore import QCoreApplication, QVariant, QEventLoop, QTimer
 from processing.core.Processing import Processing
 from qgis.core import (QgsProject,
+                       QgsExpression,
+                       QgsSettings,
                        QgsProcessing,
                        QgsApplication,
+                       QgsVectorLayer,
                        QgsProcessingAlgorithm,
                        QgsProcessingMultiStepFeedback,
                        QgsProcessingParameterBoolean,
@@ -114,7 +117,7 @@ class TopDownAlgorithm(QgsProcessingAlgorithm):
         tempLayer = vgle_layers.createTempLayer(inputLayer, parameters["OutputDirectory"],
                                                 'topdown', timeStamp)
         layer, self.holderAttribute = vgle_layers.setHolderField(tempLayer, parameters["AssignedByField"])
-        swappedLayer = processing.run("Polygon Grouper:polygon_grouper", {
+        firstResult = processing.run("Polygon Grouper:polygon_grouper", {
                 'Inputlayer': layer,
                 'Preference': False,
                 'AssignedByField': [self.holderAttribute],
@@ -128,108 +131,96 @@ class TopDownAlgorithm(QgsProcessingAlgorithm):
                 'Strict': parameters['Strict'],
                 'Simply': parameters['Simply'],
                 'Stats': True
-            }, context=context, feedback=feedback)['OUTPUT']
+            }, context=context, feedback=feedback)
+        swappedLayer = firstResult['OUTPUT']
+        mergedLayer = firstResult['MERGED']
         feedback.setProgress(50)
 
         feedback.pushInfo('Group creation started')
         project = QgsProject.instance()
-        frequency = [layer for layer in project.mapLayers().values() if layer.name() == 'Swap frequency'][-1]
+        frequency = [layerTemp for layerTemp in project.mapLayers().values() if layerTemp.name() == 'Swap frequency'][-1]
 
-
-        result = processing.run("rscripts:Topdown", {
-            'INPUT': '/path/to/file.csv',
-            'VALUE': 10,
-            'OUTPUT': '/tmp/out.csv'
+        result = processing.run("r:topdown", {
+            'INPUT': frequency,
+            'Group': os.path.join(parameters['OutputDirectory'], f'topdown_result_{timeStamp}.csv')
         })
 
         modularity = result['MODULARITY']
         feedback.pushInfo(f"Modularity Score: {modularity}")
 
-        groups = result['Group']
+        groupsCSV = result['Group']
+        uri = f"file:{groupsCSV}?type=csv&geomType=none"
+        csvLayer = QgsVectorLayer(uri, "csv_no_geom", "delimitedtext")
+        groups = {}
+        assigned_holders = set()
+        for f in csvLayer.getFeatures():
+            holder_id = f[0] 
+            group_id  = f[1] 
+            groups.setdefault(group_id, []).append(holder_id)
+            assigned_holders.add(holder_id)
+        none_group = max(groups.keys())
+        none_group_members = [f[self.holderAttribute] for f in layer.getFeatures() if f[self.holderAttribute] not in assigned_holders]
+        if none_group_members:
+            groups[none_group + 1] = none_group_members
+        feedback.pushInfo('Group creation finished!')
 
-
-
-
-
-
-
-
-
-        """
-        feedback.pushInfo('Group creation started')
-        project = QgsProject.instance()
-        change_log = [layer for layer in project.mapLayers().values() if layer.name() == 'Change log'][-1]
-        holders = list(set([f['Holder ID'] for f in change_log.getFeatures()]))
-
-        #startingHolder, holders = self.selectRandomHolder(change_log, holders)
-        startingHolder = inputLayer.selectedFeatures()[0][self.holderAttribute]
-        
-        #groups = {}
-        group = [startingHolder]
-        currentHolders = [startingHolder]
-        while parameters['holdersThreshold'] >= len(group) and currentHolders:
-            feedback.pushInfo(f'Current group size: {len(group)}')
-            feedback.pushInfo(f'Current holders to process: {currentHolders}')
-            nextHolders = []
-            for currentHolder in currentHolders:
-                holderRows = [feature for feature in change_log.getFeatures() if feature['Holder ID'] == currentHolder]
-                getRows = [feature['Get from land holder ID'] for feature in holderRows 
-                if feature['Get from land holder ID'] 
-                and feature['Get from land holder ID'] not in group
-                and feature['Get from land holder ID'] in holders]
-                giveRows = [feature['Transfer to land holder ID'] for feature in holderRows 
-                if feature['Transfer to land holder ID'] 
-                and feature['Transfer to land holder ID'] not in group
-                and feature['Transfer to land holder ID'] in holders]
-
-                if startingHolder in holders:
-                    holders.remove(startingHolder)
-                for row in getRows + giveRows:
-                    if row in holders:
-                        holders.remove(row)
-
-                extendRows = list(set(getRows + giveRows))
-
-                if not extendRows:
-                    break
-
-                group.extend(extendRows)
-                nextHolders.extend(extendRows)
-
-                if parameters['holdersThreshold'] >= len(group):
-                    break
-
-            if not nextHolders:
-                break
-            else:
-                currentHolders = nextHolders
-        """    
-            
-            #groups[group[0]] = group
-            #startingHolder, holders = self.selectRandomHolder(change_log, holders)
-            #feedback.pushInfo(f'Group started from {group[0]}: {group}')
-        """
-        groupLayer = self.selectGroup(group, inputLayer, self.holderAttribute)
-        feedback.pushInfo('Group created')
-        groupedLayer = processing.run("Polygon Grouper:polygon_grouper", {
-                'Inputlayer': groupLayer,
-                'Preference': True,
-                'AssignedByField': [self.holderAttribute],
-                'BalancedByField': parameters['BalancedByField'],
-                'Tolerance': parameters['Tolerance'],
-                'DistanceThreshold': parameters['DistanceThreshold'],
-                'SwapToGet': parameters['SwapToGet'],
-                'OutputDirectory': parameters['OutputDirectory'],
-                'OnlySelected': False, 
-                'Single': parameters['Single'],
-                'Strict': parameters['Strict'],
-                'Simply': parameters['Simply'],
-                'Stats': True
-            }, context=context, feedback=feedback)['OUTPUT']
-
-        results['OUTPUT'] = groupedLayer
+        feedback.pushInfo('Group processing started!')
+        results['OUTPUT'] = []
+        for key, group in groups.items():
+            groupLayer = self.selectGroup(group, layer, self.holderAttribute)
+            feedback.pushInfo(f'Group {key} processing started with {groupLayer.featureCount()} features')
+            feedback.pushInfo(str(type(groupLayer)))
+            tempResult = processing.run("Polygon Grouper:polygon_grouper", {
+                    'Inputlayer': groupLayer,
+                    'Preference': True,
+                    'AssignedByField': [self.holderAttribute],
+                    'BalancedByField': parameters['BalancedByField'],
+                    'Tolerance': parameters['Tolerance'],
+                    'DistanceThreshold': parameters['DistanceThreshold'],
+                    'SwapToGet': parameters['SwapToGet'],
+                    'OutputDirectory': parameters['OutputDirectory'],
+                    'OnlySelected': False, 
+                    'Single': parameters['Single'],
+                    'Strict': parameters['Strict'],
+                    'Simply': parameters['Simply'],
+                    'Stats': False
+                }, context=context, feedback=feedback)
+            groupedLayer = tempResult['OUTPUT']
+            groupedMerged = tempResult['MERGED']
+            groupedLayer.setName(f"Group {key} - {swappedLayer.name()}")
+            groupedLayer.triggerRepaint()
+            groupedMerged.setName(f"Group {key} - {mergedLayer.name()}")
+            groupedMerged.triggerRepaint()
+            layer.removeSelection()
+            results['OUTPUT'].append(groupedLayer)
+            del groupLayer
+            loop = QEventLoop()
+            QTimer.singleShot(2000, loop.quit)
+            loop.exec_()
         return results
-        """
+
+    def selectGroup(self, group, layer, idAttribute):
+        values = []
+        fieldType = layer.fields().field(idAttribute).type()
+
+        for value in group:
+            if fieldType in (QVariant.Int, QVariant.LongLong):
+                values.append(str(value))
+            else:
+                values.append(QgsExpression.quotedString(str(value)))
+        expression = f'"{idAttribute}" IN ({",".join(values)})'
+
+        layer.selectByExpression(expression)
+        layer.triggerRepaint()
+        QgsApplication.processEvents()
+
+        algParams = {
+            'INPUT': layer,
+            'OUTPUT': 'TEMPORARY_OUTPUT'
+        }
+        selectedFeatures = processing.run('native:saveselectedfeatures', algParams)["OUTPUT"]
+        return selectedFeatures
+
 
 def is_r_provider_installed():
     registry = QgsApplication.processingRegistry()
@@ -249,8 +240,8 @@ def enable_r_plugin():
         return False
 
 def checkR_folder():
-    settings = QSettings()
-    r_folder = settings.value("processing/rscripts/RFolder")
+    settings = QgsSettings()
+    r_folder = settings.value("Processing/Configuration/R_FOLDER")
 
     if not r_folder:
         return False
@@ -262,8 +253,8 @@ def checkR_folder():
     return r_folder
 
 def copyR_script(r_script_path):
-    settings = QSettings()
-    dest_folder = settings.value("processing/rscripts/RScriptsFolder")
+    settings = QgsSettings()
+    dest_folder = settings.value("Processing/Configuration/R_SCRIPTS_FOLDER")
 
     if dest_folder:
         dest_path = os.path.join(dest_folder, os.path.basename(r_script_path))
@@ -279,8 +270,4 @@ def copyR_script(r_script_path):
             shutil.copy(r_script_path, rsx_cache_path)
         except Exception as e:
             return False   
-
-    if not qgis.utils.isPluginLoaded("processing_r"):
-        qgis.utils.loadPlugin("processing_r")
-    Processing.initialize()
     return True

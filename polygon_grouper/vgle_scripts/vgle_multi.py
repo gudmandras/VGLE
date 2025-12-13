@@ -4,6 +4,8 @@ import platform
 import math
 import sys
 import traceback
+import time
+import logging
 from multiprocessing import Pool
 
 from qgis.core import (QgsTask,
@@ -13,6 +15,32 @@ from qgis.core import (QgsTask,
                        QgsVectorFileWriter)
 
 from . import vgle_utils, vgle_features, vgle_methods, vgle_layers
+
+class LoggerWritter:
+    def write(self, message: str):
+        if message.endswith('\n'):
+            try:
+                logger.debug(message[-1])
+            except AttributeError:
+                pass
+        elif message.endswith('\n\n'):
+            try:
+                logger.debug(message[-2])
+            except AttributeError:
+                pass
+        else:
+            try:
+                logger.debug(message)
+            except AttributeError:
+                pass
+
+    def flush(self):
+        pass
+
+
+logger = logging.getLogger()
+sys.stdout = LoggerWritter()
+sys.stderr = LoggerWritter()
 
 def import_processing(prefix):
     QgsApplication.setPrefixPath(prefix, True)
@@ -30,6 +58,9 @@ def import_vgle():
         sys.path.insert(0, plugin_dir)
 
     from vgle_scripts import vgle_layers
+
+
+
 
 def multi_distance_matrix(outputDirectory, centroids, idAttribute):
     layer = QgsVectorLayer(centroids, f"centroids", "ogr")
@@ -106,6 +137,72 @@ def distance_matrix_process(input_centroids ,centroids, idAttribute):
 
     return matrix
 
+def maxDistance(self, featureIds, seed):
+    """
+    DESCRIPTION: Calculate maximum distance of a list of holding and the seed polygon
+    INPUTS:
+            featureIds: List, holding ids
+            seed: String, holding id
+            layer: QgsVectorLayer, optional
+    OUTPUTS: Numeric
+    """
+    maxDistance = 0
+    for featureId in featureIds:
+        distance = self.distanceMatrix[seed][featureId]
+        if distance > maxDistance:
+            maxDistance = distance
+    return maxDistance
+
+
+def avgDistance(self, featureIds, seed):
+    """
+    DESCRIPTION: Calculate average distance of a list of holding and the seed polygon
+    INPUTS:
+            featureIds: List, holding ids
+            seed: String, holding id
+            layer: QgsVectorLayer, optional
+    OUTPUTS: Numeric
+    """
+    sumDistance = 0
+    divider = 0
+    for featureId in featureIds:
+        divider += 1
+        distance = self.distanceMatrix[seed][featureId]
+        sumDistance += distance
+    return sumDistance / divider
+
+def isCloser(self, thresholdDistance, featureIds, seed, holder):
+    """
+    DESCRIPTION: Check if certain features are closer to the seed than the threshold
+    INPUTS:
+            thresholdDistance: Numeric
+            featureIds: List, holding ids
+            seed: String, holding id
+    OUTPUTS: Boolean
+    """
+    isCloserBool = True
+    sumDistance = 0
+    for featureId in featureIds:
+        distance = self.distanceMatrix[seed][featureId]
+        if distance > thresholdDistance:
+            isCloserBool = False
+        sumDistance += distance
+    if sumDistance > self.totalDistances[holder]:
+        isCloserBool = False
+    return isCloserBool
+
+def calculateCombinationArea(self, combinations):
+    """
+    DESCRIPTION: Calculate a list of holding's total area 
+    INPUTS:
+            combinations: List, holding ids
+    OUTPUTS: Numeric
+    """
+    temporaryArea = 0
+    for combination in combinations:
+        temporaryArea += self.holdingsWithArea[combination]
+    return temporaryArea
+
 class NeighbourFunctionComparisonTask(QgsTask):
 
     def __init__(self, name, holder, targetHolder, holderCombination, targetCombination, holderSeed, targetSeed, holderTotalArea, targetTotalArea, context, strict=False, useSingle=False, on_finished=None):
@@ -129,49 +226,48 @@ class NeighbourFunctionComparisonTask(QgsTask):
         #    print(f"Attribute '{attr}': {repr(value)}\n")
 
     def run(self):
-        """Here you implement your heavy lifting.
-        Should periodically test for isCanceled() to gracefully
-        abort.
-        This method MUST return True or False.
-        Raising exceptions will crash QGIS, so we handle them
-        internally and raise them in self.finished
-        """
         try:
-            temporaryHolderArea = vgle_utils.calculateCombinationArea(self.context, self.holderCombination)                             
+            temporaryHolderArea = calculateCombinationArea(self.context, self.holderCombination) 
+            if self.isCanceled():
+                return False     
+
             if self.strict:
                 # Distance conditions
-                holderMaxDistance = vgle_features.maxDistance(self.context, self.holderCombination, self.holderSeed)
-                holderAvgDistanceOld = vgle_features.avgDistance(self.context, self.holderCombination, self.holderSeed)
-                holderAvgDistanceNew = vgle_features.avgDistance(self.context, self.targetCombination, self.holderSeed)
+                holderMaxDistance = maxDistance(self.context, self.holderCombination, self.holderSeed)
+                holderAvgDistanceOld = avgDistance(self.context, self.holderCombination, self.holderSeed)
+                holderAvgDistanceNew = avgDistance(self.context, self.targetCombination, self.holderSeed)
+                if self.isCanceled():
+                    return False
                 if self.useSingle and not self.targetSeed :
                     targetCloser = True
                     targetAvgDistanceNew, targetAvgDistanceOld = 1,2
-                    targetMaxDistance = vgle_features.maxDistance(self.context, self.targetCombination, self.targetCombination[0])
-                    holderCloser = vgle_utils.isCloser(self.context, targetMaxDistance, self.holderCombination, self.targetSeed, self.targetHolder)
+                    targetMaxDistance = maxDistance(self.context, self.targetCombination, self.targetCombination[0])
+                    holderCloser = isCloser(self.context, targetMaxDistance, self.holderCombination, self.targetSeed, self.targetHolder)
                 else:
-                    targetMaxDistance = vgle_features.maxDistance(self.context, self.targetCombination, self.targetSeed)
-                    targetAvgDistanceOld = vgle_features.avgDistance(self.context, self.targetCombination, self.targetSeed)
-                    targetAvgDistanceNew = vgle_features.avgDistance(self.context, self.holderCombination, self.targetSeed)
-                    targetCloser = vgle_utils.isCloser(self.context, holderMaxDistance, self.targetCombination, self.holderSeed, self.holder)
-                    holderCloser = vgle_utils.isCloser(self.context, targetMaxDistance, self.holderCombination, self.targetSeed, self.targetHolder)
+                    targetMaxDistance = maxDistance(self.context, self.targetCombination, self.targetSeed)
+                    targetAvgDistanceOld = avgDistance(self.context, self.targetCombination, self.targetSeed)
+                    targetAvgDistanceNew = avgDistance(self.context, self.holderCombination, self.targetSeed)
+                    targetCloser = isCloser(self.context, holderMaxDistance, self.targetCombination, self.holderSeed, self.holder)
+                    holderCloser = isCloser(self.context, targetMaxDistance, self.holderCombination, self.targetSeed, self.targetHolder)
             else:
                 targetCloser, holderCloser = True, True
                 targetAvgDistanceNew, targetAvgDistanceOld = 1,2
                 holderAvgDistanceNew, holderAvgDistanceOld = 1,2
-
+            
             if self.isCanceled():
                 return False
             
             if targetCloser and holderCloser:
                 if (targetAvgDistanceNew < targetAvgDistanceOld) and (holderAvgDistanceNew < holderAvgDistanceOld):
                     #Weight condition
-                    temporaryTargetArea = vgle_utils.calculateCombinationArea(self.context, self.targetCombination)
+                    temporaryTargetArea = calculateCombinationArea(self.context, self.targetCombination)
                     newHolderTotalArea = self.holderTotalArea - temporaryHolderArea + temporaryTargetArea
                     newNeighbourTotalArea = self.targetTotalArea - temporaryTargetArea + temporaryHolderArea
                     thresholdHolder = vgle_utils.checkTotalAreaThreshold(self.context, newHolderTotalArea, self.holder)
                     thresholdNeighbour = vgle_utils.checkTotalAreaThreshold(self.context, newNeighbourTotalArea, self.targetHolder )
                     difference = abs(newHolderTotalArea-self.holderTotalArea)
-                    print(difference)
+                    if self.isCanceled():
+                        return False
                     if thresholdHolder and thresholdNeighbour:
                         holderNewHoldignNum = self.context.holdersHoldingNumber[self.holder] - len(self.holderCombination) + len(self.targetCombination)
                         targetNewHoldingNum = self.context.holdersHoldingNumber[self.targetHolder ] - len(self.targetCombination) + len( self.holderCombination)
@@ -220,26 +316,19 @@ class CloserFunctionComparisonTask(QgsTask):
         #    print(f"Attribute '{attr}': {repr(value)}\n")
 
     def run(self):
-        """Here you implement your heavy lifting.
-        Should periodically test for isCanceled() to gracefully
-        abort.
-        This method MUST return True or False.
-        Raising exceptions will crash QGIS, so we handle them
-        internally and raise them in self.finished
-        """
         try:
-            holderMaxDistance = vgle_features.maxDistance(self.context, self.holderCombination, self.holderSeed)
-            targetMaxDistance = vgle_features.maxDistance(self.context, self.targetCombination, self.targetSeed)
-            targetCloser = vgle_utils.isCloser(self.context, holderMaxDistance, self.targetCombination, self.holderSeed, self.holder)
-            holderCloser = vgle_utils.isCloser(self.context, targetMaxDistance, self.holderCombination, self.targetSeed, self.targetHolder)
+            holderMaxDistance = maxDistance(self.context, self.holderCombination, self.holderSeed)
+            targetMaxDistance = maxDistance(self.context, self.targetCombination, self.targetSeed)
+            targetCloser = isCloser(self.context, holderMaxDistance, self.targetCombination, self.holderSeed, self.holder)
+            holderCloser = isCloser(self.context, targetMaxDistance, self.holderCombination, self.targetSeed, self.targetHolder)
             
             if not targetCloser or not holderCloser:
                 return False
             
-            holderAvgDistanceOld = vgle_features.avgDistance(self.context, self.holderCombination, self.holderSeed)
-            holderAvgDistanceNew = vgle_features.avgDistance(self.context, self.targetCombination, self.holderSeed)
-            targetAvgDistanceOld = vgle_features.avgDistance(self.context, self.targetCombination, self.targetSeed)
-            targetAvgDistanceNew = vgle_features.avgDistance(self.context, self.holderCombination, self.targetSeed)
+            holderAvgDistanceOld = avgDistance(self.context, self.holderCombination, self.holderSeed)
+            holderAvgDistanceNew = avgDistance(self.context, self.targetCombination, self.holderSeed)
+            targetAvgDistanceOld = avgDistance(self.context, self.targetCombination, self.targetSeed)
+            targetAvgDistanceNew = avgDistance(self.context, self.holderCombination, self.targetSeed)
 
             if (targetAvgDistanceNew >= targetAvgDistanceOld) or (holderAvgDistanceNew >= holderAvgDistanceOld):
                 return False
@@ -247,22 +336,24 @@ class CloserFunctionComparisonTask(QgsTask):
             if self.isCanceled():
                 return False
 
-            newHolderTotalArea = self.holderTotalArea - vgle_utils.calculateCombinationArea(self.context, self.holderCombination) + vgle_utils.calculateCombinationArea(self.context,  self.targetCombination)
+            newHolderTotalArea = self.holderTotalArea - calculateCombinationArea(self.context, self.holderCombination) + calculateCombinationArea(self.context,  self.targetCombination)
             if not vgle_utils.checkTotalAreaThreshold(self.context, newHolderTotalArea, self.holder):
                 return False
-            newTargetTotalArea =  self.targetTotalArea - vgle_utils.calculateCombinationArea(self.context, self.targetCombination) + vgle_utils.calculateCombinationArea(self.context, self.holderCombination)
+            newTargetTotalArea =  self.targetTotalArea - calculateCombinationArea(self.context, self.targetCombination) + calculateCombinationArea(self.context, self.holderCombination)
             if not vgle_utils.checkTotalAreaThreshold(self.context, newTargetTotalArea, self.targetHolder):
                 return False
-            localMeasure = sum([vgle_utils.calculateCompositeNumber(self.context, self.holderSeed, tempId) for tempId in self.holderCombination])
+            
             holderNewHoldingNum = self.context.holdersHoldingNumber[self.holder] - len(self.holderCombination) + len(self.targetCombination)
             targetNewHoldingNum = self.context.holdersHoldingNumber[self.targetHolder] - len(self.targetCombination) + len(self.holderCombination)
             if holderNewHoldingNum <= self.context.holdersHoldingNumber[self.holder] and targetNewHoldingNum <= self.context.holdersHoldingNumber[self.targetHolder]:
-                self.result = (self.holderCombination, self.targetCombination, newHolderTotalArea, newTargetTotalArea, localMeasure)
+                localMeasure = sum([vgle_utils.calculateCompositeNumber(self.context, self.holderSeed, tempId) for tempId in self.holderCombination])
+                self.result = (self.holderCombination, self.targetCombination, newHolderTotalArea, newTargetTotalArea, self.targetHolder, localMeasure)
                 return True
             else:
                 return False
         except Exception as e:
             self.exception = traceback.format_exc()
+            print(self.exception)
             return False
 
     def finished(self, result):

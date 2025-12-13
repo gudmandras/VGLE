@@ -5,14 +5,14 @@
 ##MODULARITY=output number
 ##showplots
 
-required_packages <- c("sp", "igraph", "readr", "ggplot2", "terra")
+#required_packages <- c("sp", "igraph", "readr", "ggplot2", "terra")
 
-for(pkg in required_packages){
-  if(!require(pkg, character.only = TRUE)){
-    install.packages(pkg, repos = "https://cloud.r-project.org/")
-    library(pkg, character.only = TRUE)
-  }
-}
+#for(pkg in required_packages){
+#  if(!require(pkg, character.only = TRUE)){
+#    install.packages(pkg, repos = "https://cloud.r-project.org/", lib="C:/Users/gudma/AppData/Roaming/QGIS/QGIS3/profiles/default/processing/rlibs")
+#    library(pkg, character.only = TRUE)
+#  }
+#}
 
 library(sp)
 library(igraph)
