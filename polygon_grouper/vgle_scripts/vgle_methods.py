@@ -21,12 +21,10 @@ def neighbours(self, layer, feedback, totalAreas=None):
     """
     #import ptvsd
     #ptvsd.debug_this_thread()
-    maxCombTurn = 20000
+    maxCombTurn = 2000
     TIMEOUT_SECONDS = 20
-    if self.simply:
-        MAX_PARALLEL = os.cpu_count() - 2
-    else:
-        MAX_PARALLEL = 100
+    MAX_PARALLEL = os.cpu_count() - 2
+
     changes = 0
     changer = True
     self.globalChangables = vgle_utils.getChangableHoldings(self)
@@ -156,6 +154,7 @@ def neighbours(self, layer, feedback, totalAreas=None):
                         app.setMaxThreads(MAX_PARALLEL)
                         finished_count = 0
                         tasks_to_complete = 0
+                        cleanup_initiated = False 
                         activeTasks = []
                         taskResults = []
 
@@ -169,18 +168,17 @@ def neighbours(self, layer, feedback, totalAreas=None):
                                     feedback.pushInfo(result)
 
                             if finished_count >= tasks_to_complete:
-                                for task in activeTasks:
-                                    try:
-                                        task.cancel()
-                                    except RuntimeError:
-                                        pass
+                                cleanup_and_quit()
 
-                                QCoreApplication.processEvents()
-                                if loop.isRunning():
-                                    loop.quit()
 
-                        def cancel_all_tasks_and_quit():
-                            nonlocal activeTasks, loop
+                        def cleanup_and_quit():
+                            nonlocal cleanup_initiated, activeTasks, loop
+
+                            if cleanup_initiated:
+                                return
+                            
+                            cleanup_initiated = True
+
                             for task in activeTasks:
                                 try:
                                     task.cancel()
@@ -189,7 +187,9 @@ def neighbours(self, layer, feedback, totalAreas=None):
 
                             QCoreApplication.processEvents()
                             if loop.isRunning():
-                                loop.quit()        
+                                loop.quit()
+                            if batch_timer.isActive():
+                                batch_timer.stop()
 
                         lenTurn = 0
                         for combination in holdingCombinations:
@@ -207,18 +207,18 @@ def neighbours(self, layer, feedback, totalAreas=None):
 
                         loop = QEventLoop()
                         tasks_to_complete = len(activeTasks)
-                        #batch_timer = QTimer()
-                        #batch_timer.setInterval(TIMEOUT_SECONDS * 1000)
-                        #batch_timer.setSingleShot(True)
-                        #batch_timer.timeout.connect(cancel_all_tasks_and_quit)
+                        batch_timer = QTimer()
+                        batch_timer.setInterval(TIMEOUT_SECONDS * 1000)
+                        batch_timer.setSingleShot(True)
+                        batch_timer.timeout.connect(cleanup_and_quit)
                         
                         if tasks_to_complete > 0:
                             QCoreApplication.processEvents()
-                            #batch_timer.start()
+                            batch_timer.start()
                             loop.exec_()
 
-                            #if batch_timer.isActive():
-                            #    batch_timer.stop()
+                            if batch_timer.isActive():
+                                batch_timer.stop()
                         
                         diff = False
                         for taskResult in taskResults:
@@ -297,7 +297,7 @@ def closer(self, layer, feedback, seeds=None, totalAreas=None):
     """
     #import ptvsd
     #ptvsd.debug_this_thread()
-    maxCombTurn = 20000
+    maxCombTurn = 2000
     changes = 1
     changer = True
     self.globalChangables = vgle_utils.getChangableHoldings(self)

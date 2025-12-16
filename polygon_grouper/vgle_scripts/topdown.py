@@ -185,18 +185,26 @@ class TopDownAlgorithm(QgsProcessingAlgorithm):
                     'Simply': parameters['Simply'],
                     'Stats': False
                 }, context=context, feedback=feedback)
-            groupedLayer = tempResult['OUTPUT']
-            groupedMerged = tempResult['MERGED']
-            groupedLayer.setName(f"Group {key} - {swappedLayer.name()}")
-            groupedLayer.triggerRepaint()
-            groupedMerged.setName(f"Group {key} - {mergedLayer.name()}")
-            groupedMerged.triggerRepaint()
-            layer.removeSelection()
-            results['OUTPUT'].append(groupedLayer)
-            del groupLayer
-            loop = QEventLoop()
-            QTimer.singleShot(2000, loop.quit)
-            loop.exec_()
+            try:
+                groupedLayer = tempResult['OUTPUT']
+                groupedMerged = tempResult['MERGED']
+                groupedLayer.setName(f"Group {key} - {swappedLayer.name()}")
+                groupedLayer.triggerRepaint()
+                groupedMerged.setName(f"Group {key} - {mergedLayer.name()}")
+                groupedMerged.triggerRepaint()
+                layer.removeSelection()
+                results['OUTPUT'].append(groupedLayer)
+            except KeyError:
+                groupedLayer = groupLayer
+                groupedLayer.setName(f"Group {key} - {swappedLayer.name()}")
+                groupedLayer.triggerRepaint()
+                layer.removeSelection()
+                QgsProject.instance().addMapLayer(groupedLayer)
+                root = QgsProject().instance().layerTreeRoot()
+                root.insertLayer(0, groupedLayer)
+                results['OUTPUT'].append(groupedLayer)
+
+            #del groupLayer
         return results
 
     def selectGroup(self, group, layer, idAttribute):
@@ -219,8 +227,10 @@ class TopDownAlgorithm(QgsProcessingAlgorithm):
             'OUTPUT': 'TEMPORARY_OUTPUT'
         }
         selectedFeatures = processing.run('native:saveselectedfeatures', algParams)["OUTPUT"]
+        loop = QEventLoop()
+        QTimer.singleShot(2000, loop.quit)
+        loop.exec_()
         return selectedFeatures
-
 
 def is_r_provider_installed():
     registry = QgsApplication.processingRegistry()

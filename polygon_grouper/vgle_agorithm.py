@@ -192,7 +192,7 @@ class PolygonGrouper(QgsProcessingAlgorithm):
         elif self.algorithmIndex == 1:
             oneSeedBoolean = vgle_utils.checkSeedNumber(self.seeds, feedback)
             if oneSeedBoolean:
-                swapedLayer, totalAreas = vgle_methods.closer_2(self, layer, feedback)
+                swapedLayer, totalAreas = vgle_methods.closer(self, layer, feedback)
             else:
                 swapedLayer = False
         elif self.algorithmIndex == 2:

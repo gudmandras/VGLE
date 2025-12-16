@@ -101,21 +101,25 @@ class BottomUpAlgorithm(QgsProcessingAlgorithm):
         tempLayer = vgle_layers.createTempLayer(inputLayer, parameters["OutputDirectory"],
                                                 'bottomup', timeStamp)
         layer, self.holderAttribute = vgle_layers.setHolderField(tempLayer, parameters["AssignedByField"])
-        swappedLayer = processing.run("Polygon Grouper:polygon_grouper", {
-                'Inputlayer': layer,
-                'Preference': True,
-                'AssignedByField': [self.holderAttribute],
-                'BalancedByField': parameters['BalancedByField'],
-                'Tolerance': parameters['Tolerance'],
-                'DistanceThreshold': parameters['DistanceThreshold'],
-                'SwapToGet': parameters['SwapToGet'],
-                'OutputDirectory': parameters['OutputDirectory'],
-                'OnlySelected': False, 
-                'Single': parameters['Single'],
-                'Strict': parameters['Strict'],
-                'Simply': parameters['Simply'],
-                'Stats': True
-            }, context=context, feedback=feedback)['OUTPUT']
+        try:
+            swappedLayer = processing.run("Polygon Grouper:polygon_grouper", {
+                    'Inputlayer': layer,
+                    'Preference': True,
+                    'AssignedByField': [self.holderAttribute],
+                    'BalancedByField': parameters['BalancedByField'],
+                    'Tolerance': parameters['Tolerance'],
+                    'DistanceThreshold': parameters['DistanceThreshold'],
+                    'SwapToGet': parameters['SwapToGet'],
+                    'OutputDirectory': parameters['OutputDirectory'],
+                    'OnlySelected': False, 
+                    'Single': parameters['Single'],
+                    'Strict': parameters['Strict'],
+                    'Simply': parameters['Simply'],
+                    'Stats': True
+                }, context=context, feedback=feedback)['OUTPUT']
+        except KeyError as e:
+            feedback.reportError('No change was made - bottom up process terminated!', fatalError=True)
+            return {}
         feedback.setProgress(50)
         
         feedback.pushInfo('Group creation started')
