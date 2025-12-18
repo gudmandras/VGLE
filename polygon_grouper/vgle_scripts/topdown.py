@@ -196,7 +196,7 @@ class TopDownAlgorithm(QgsProcessingAlgorithm):
                 results['OUTPUT'].append(groupedLayer)
             except KeyError:
                 groupedLayer = groupLayer
-                groupedLayer.setName(f"Group {key} - {swappedLayer.name()}")
+                groupedLayer.setName(f"Group {key} - {swappedLayer.name()} - no changes")
                 groupedLayer.triggerRepaint()
                 layer.removeSelection()
                 QgsProject.instance().addMapLayer(groupedLayer)

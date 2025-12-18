@@ -10,7 +10,263 @@ from qgis.core import QgsApplication
 from PyQt5.QtCore import QTimer, QEventLoop, pyqtSlot, QCoreApplication
 from qgis.core import QgsFeatureRequest
 
+
 def neighbours(self, layer, feedback, totalAreas=None):
+    """
+    DESCRIPTION: Function for make swap to get group holder's holdings around their seed polygons.
+    The function try to swap the neighbour polygons for other holdings of the holder.
+    INPUTS:
+            layer: QgsVectorLayer
+            feedback: QgsProcessingMultiStepFeedback
+    OUTPUTS: QgsVectorLayer
+    """
+    #import ptvsd
+    #ptvsd.debug_this_thread()
+    changes = 1
+    changer = True
+    self.globalChangables = vgle_utils.getChangableHoldings(self)
+
+    try:
+        turn = int(self.actualHolderAttribute.split('_')[0])
+        if self.algorithmIndex == 3:
+            if turn == (self.steps/2)-3:
+                self.actualHolderAttribute = \
+                    str(int(self.actualHolderAttribute.split('_')[0])) + self.actualHolderAttribute[2:]
+                self.actualIdAttribute = str(int(self.actualIdAttribute.split('_')[0])) + self.actualIdAttribute[2:]
+            else:
+                if turn >= 10:
+                    self.actualHolderAttribute = \
+                        str(int(self.actualHolderAttribute.split('_')[0])-1) + self.actualHolderAttribute[2:]
+                    self.actualIdAttribute = \
+                        str(int(self.actualIdAttribute.split('_')[0])-1) + self.actualIdAttribute[2:]
+                else:
+                    self.actualHolderAttribute = \
+                        str(int(self.actualHolderAttribute.split('_')[0])-1) + self.actualHolderAttribute[1:]
+                    self.actualIdAttribute = \
+                        str(int(self.actualIdAttribute.split('_')[0])-1) + self.actualIdAttribute[1:]
+                turn -= 1
+    except AttributeError:
+        turn = 0
+
+    if totalAreas:
+        holdersLocalTotalArea = totalAreas
+    else:
+        holdersLocalTotalArea = copy.deepcopy(self.holdersTotalArea)
+    feedback.pushInfo('Neighbours algorithm start')
+
+    while changer:
+        turn += 1
+        self.actualIdAttribute, self.actualHolderAttribute, layer = vgle_layers.setTurnAttributes(self, layer, turn)
+        not_changables = []
+        feedback.pushInfo(f'Turn {turn}')
+        for holder, holdings in self.holdersWithHoldings.items():
+            if holder == 'NULL':
+                continue
+
+            seeds = self.seeds[holder]
+            
+            if not seeds:
+                continue
+
+            for seed in seeds:
+                neighboursIds, neighboursLayer = vgle_features.getNeighbours(self.idAttribute, layer, seed)
+                inDistance = self.filteredDistanceMatrix[seed]
+                distanceChanges = vgle_utils.getChangableHoldings(self, inDistance)
+                localChangables = [distance for distance in distanceChanges
+                                    if distance in self.globalChangables and distance not in not_changables]
+                if not localChangables:
+                    continue
+
+                holdingsIds = []
+                changesIds = []
+                
+                for holdingId in holdings:
+                    if holdingId in neighboursIds:
+                        if holdingId not in self.seeds[holder]:
+                            self.seeds[holder].append(holdingId)
+                    else:
+                        holdingsIds.append(holdingId)
+
+                neighboursFeatures = neighboursLayer.getFeatures()
+                for nghfeat in neighboursFeatures:
+                    # Get holder total area
+                    holderTotalArea = holdersLocalTotalArea[holder]
+                    # Filter holdings
+                    filteredHolderHoldingsIds = vgle_utils.idsForChange(holdingsIds, localChangables)
+                    if not filteredHolderHoldingsIds:
+                        continue
+                    
+                    # Get ngh holder name
+                    neighbourHolder = nghfeat.attribute(self.actualHolderAttribute)
+                    if neighbourHolder != 'NULL' and neighbourHolder != holder:
+                        try:
+                            targetHolderSeed = self.seeds[neighbourHolder][0]
+                        except IndexError:
+                            if self.useSingle:
+                                targetHolderSeed = False
+                            else:
+                                continue
+                        except KeyError:
+                            try:
+                                neighbourHolder = int(neighbourHolder)
+                                targetHolderSeed = self.seeds[int(neighbourHolder)][0]
+                            except KeyError:
+                                if self.useSingle:
+                                    targetHolderSeed = False
+                                else:
+                                    continue
+                        # Get holder total area
+                        neighbourHolderTotalArea = holdersLocalTotalArea[neighbourHolder]
+                        # Get holders holdings
+                        neighbourHoldings = self.holdersWithHoldings[neighbourHolder]
+                        # Filter holdings
+                        neighbourHoldingsIds = vgle_utils.idsForChange(neighbourHoldings,
+                                                                        localChangables)
+                        if not neighbourHoldingsIds:
+                            continue
+                        
+                        # Filter out nghs
+                        filteredNeighbourHoldingsIds = [holdingId for holdingId
+                                                        in neighbourHoldingsIds
+                                                        if holdingId not in neighboursIds]
+
+                        neighbourTargetFeatureId = nghfeat.attribute(self.idAttribute)
+                        if not neighbourTargetFeatureId in localChangables:
+                            continue
+                        if not targetHolderSeed:
+                            neighbourHoldingsCombinations = [[neighbourTargetFeatureId]]
+                        else: 
+                            neighbourHoldingsCombinations = \
+                                vgle_utils.combine_with_constant_in_all(
+                                    filteredNeighbourHoldingsIds, neighbourTargetFeatureId)
+
+                        holdingCombinations = vgle_utils.combine_with_constant_in_all(filteredHolderHoldingsIds)
+
+                        holderCombinationForChange = None
+                        neighbourCombinationForChange = None
+                        holderNewTotalArea = 0
+                        neighbourNewTotalArea = 0
+                        totalAreaDifference = -999
+                        
+                        lenTurn = 0
+                        for combination in holdingCombinations:
+                            combinationLenght = len(combination)
+                            combTurn = 0
+                            if self.simply:
+                                if combTurn > 10000*combinationLenght and lenTurn > 20000:
+                                    break
+                            for neighbourCombination in neighbourHoldingsCombinations:                
+                                lenTurn += 1  
+                                combTurn += 1            
+                                temporaryHolderArea = vgle_utils.calculateCombinationArea(self, combination)                             
+                                if self.strict:
+                                    # Distance conditions
+                                    if self.useSingle and not targetHolderSeed:
+                                        holderMaxDistance = vgle_features.maxDistance(self, combination, seed, layer)
+                                        holderAvgDistanceOld = vgle_features.avgDistance(self, combination, seed, layer)
+                                        holderAvgDistanceNew = vgle_features.avgDistance(self, neighbourCombination, seed, layer)
+                                        targetCloser = True
+                                        targetAvgDistanceNew, targetAvgDistanceOld = 1,2
+                                        holderCloser = vgle_utils.isCloser(self, targetMaxDistance, combination, targetHolderSeed, neighbourHolder, layer)
+                                    else:
+                                        targetMaxDistance = vgle_features.maxDistance(self, neighbourCombination, targetHolderSeed, layer)
+                                        targetAvgDistanceOld = vgle_features.avgDistance(self, neighbourCombination, targetHolderSeed, layer)
+                                        holderMaxDistance = vgle_features.maxDistance(self, combination, seed, layer)
+                                        holderAvgDistanceOld = vgle_features.avgDistance(self, combination, seed, layer)
+                                        holderAvgDistanceNew = vgle_features.avgDistance(self, neighbourCombination, seed, layer)
+                                        targetAvgDistanceNew = vgle_features.avgDistance(self, combination, targetHolderSeed, layer)
+                                        targetCloser = vgle_utils.isCloser(self, holderMaxDistance, neighbourCombination, seed, holder, layer)
+                                        holderCloser = vgle_utils.isCloser(self, targetMaxDistance, combination, targetHolderSeed, neighbourHolder, layer)
+                                else:
+                                    targetCloser, holderCloser = True, True
+                                    targetAvgDistanceNew, targetAvgDistanceOld = 1,2
+                                    holderAvgDistanceNew, holderAvgDistanceOld = 1,2
+                                if targetCloser and holderCloser:
+                                    if (targetAvgDistanceNew < targetAvgDistanceOld) and (holderAvgDistanceNew < holderAvgDistanceOld):
+                                        #Weight condition
+                                        temporaryTargetArea = vgle_utils.calculateCombinationArea(self, neighbourCombination)
+                                        newHolderTotalArea = holderTotalArea - temporaryHolderArea + temporaryTargetArea
+                                        newNeighbourTotalArea = neighbourHolderTotalArea - temporaryTargetArea + temporaryHolderArea
+                                        thresholdHolder = vgle_utils.checkTotalAreaThreshold(self, newHolderTotalArea, holder)
+                                        thresholdNeighbour = vgle_utils.checkTotalAreaThreshold(self, newNeighbourTotalArea, neighbourHolder)
+                                        difference = abs(newHolderTotalArea-holderTotalArea)
+                                        if totalAreaDifference == -999:
+                                            if thresholdHolder and thresholdNeighbour:
+                                                holderNewHoldignNum = self.holdersHoldingNumber[holder] - len(combination) + len(neighbourCombination)
+                                                targetNewHoldingNum = self.holdersHoldingNumber[neighbourHolder] - len(neighbourCombination) + len(combination)
+                                                if self.strict:
+                                                    if holderNewHoldignNum > self.holdersHoldingNumber[holder] and targetNewHoldingNum > self.holdersHoldingNumber[neighbourHolder]:
+                                                        break
+                                                holderCombinationForChange = combination
+                                                neighbourCombinationForChange = neighbourCombination
+                                                holderNewTotalArea = newHolderTotalArea
+                                                neighbourNewTotalArea = newNeighbourTotalArea
+                                                totalAreaDifference = difference
+                                        else:
+                                            if thresholdHolder and thresholdNeighbour and difference < totalAreaDifference:
+                                                holderNewHoldignNum = self.holdersHoldingNumber[holder] - len(combination) + len(neighbourCombination)
+                                                targetNewHoldingNum = self.holdersHoldingNumber[neighbourHolder] - len(neighbourCombination) + len(combination)
+                                                if self.strict:
+                                                    if holderNewHoldignNum > self.holdersHoldingNumber[holder] and targetNewHoldingNum > self.holdersHoldingNumber[neighbourHolder]:
+                                                        break
+                                                holderCombinationForChange = combination
+                                                neighbourCombinationForChange = neighbourCombination
+                                                holderNewTotalArea = newHolderTotalArea
+                                                neighbourNewTotalArea = newNeighbourTotalArea
+                                                totalAreaDifference = difference 
+
+                        if holderCombinationForChange and neighbourCombinationForChange:       
+                            vgle_layers.setAttributeValues(self, layer, holder, neighbourHolder, holderCombinationForChange, neighbourCombinationForChange)
+                            if self.stats:
+                                self.interactionTable[holder][neighbourHolder] += 1
+                                self.interactionTable[neighbourHolder][holder] += 1    
+                            vgle_utils.update_areas_and_distances(self, holder, neighbourHolder, holderCombinationForChange, neighbourCombinationForChange, seed, targetHolderSeed, localChangables, layer)
+                            commitMessage = f'Change {self.counter} for {neighbourCombinationForChange} (holder:{neighbourHolder}) to get neighbour of {seed} (holder:{holder}): ' \
+                                            f'{holderCombinationForChange} for {neighbourCombinationForChange}'
+                            logging.debug(commitMessage)
+                            feedback.pushInfo(commitMessage)
+
+                            holdersLocalTotalArea[holder] = holderNewTotalArea
+                            holdersLocalTotalArea[neighbourHolder] = neighbourNewTotalArea                            
+                not_changables.extend(changesIds)
+
+        if turn == 1:
+            feedback.pushInfo(f'Changes in turn {turn}: {self.counter}') 
+            logging.debug(f'Changes in turn {turn}: {self.counter}')
+            if changes == 0:
+                changer = False
+            else:
+                changes = copy.deepcopy(self.counter)
+        elif self.algorithmIndex == 3 and changes == 1 and turn <= (self.steps/2)-2:
+            changes = copy.deepcopy(self.counter)
+            feedback.pushInfo(f'Changes in turn {turn}: {self.counter}') 
+            logging.debug(f'Changes in turn {turn}: {self.counter}')
+        else:
+            logging.debug(f'Changes in turn {turn}: {self.counter-changes}')
+            feedback.pushInfo(f'Changes in turn {turn}: {self.counter-changes}')
+            if changes == self.counter:
+                changer = False
+                layer.startEditing()
+                indexes = []
+                indexes.append(layer.fields().indexFromName(self.actualIdAttribute))
+                indexes.append(layer.fields().indexFromName(self.actualHolderAttribute))
+                layer.deleteAttributes(indexes)
+                layer.updateFields()
+                layer.commitChanges()
+            elif (self.algorithmIndex == 0 or self.algorithmIndex == 3) and (turn == self.steps-3):
+                changer = False
+            elif self.algorithmIndex == 2 and turn == (self.steps/2)-3:
+                changer = False
+            else:
+                changes = copy.deepcopy(self.counter)
+        feedback.setCurrentStep(1 + turn)
+        feedback.pushInfo(f'Save turn results to the file')
+        if feedback.isCanceled():
+            return None, None
+    return layer, holdersLocalTotalArea
+
+
+def neighbours_multi(self, layer, feedback, totalAreas=None):
     """
     DESCRIPTION: Function for make swap to get group holder's holdings around their seed polygons.
     The function try to swap the neighbour polygons for other holdings of the holder.
@@ -286,6 +542,7 @@ def neighbours(self, layer, feedback, totalAreas=None):
             return None, None
     return layer, holdersLocalTotalArea
 
+
 def closer(self, layer, feedback, seeds=None, totalAreas=None):
     """
     DESCRIPTION: Function for make swap to get group holder's holdings closer to their seed polygons. The function try to swap the nearby polygons for other holdings of the holder. 
@@ -517,8 +774,7 @@ def closer(self, layer, feedback, seeds=None, totalAreas=None):
     return layer, holdersLocalTotalArea
 
 
-
-def closer_2(self, layer, feedback, seeds=None, totalAreas=None):
+def closer_multi(self, layer, feedback, seeds=None, totalAreas=None):
     """
     DESCRIPTION: Function for make swap to get group holder's holdings closer to their seed polygons. The function try to swap the nearby polygons for other holdings of the holder. 
     INPUTS:
@@ -531,10 +787,7 @@ def closer_2(self, layer, feedback, seeds=None, totalAreas=None):
     #ptvsd.debug_this_thread()
     maxCombTurn = 2000
     TIMEOUT_SECONDS = 60
-    if self.simply:
-        MAX_PARALLEL = 100
-    else:
-        MAX_PARALLEL = 100
+    MAX_PARALLEL = os.cpu_count() - 2
     changes = 1
     changer = True
     self.globalChangables = vgle_utils.getChangableHoldings(self)
