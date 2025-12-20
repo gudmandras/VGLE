@@ -11,7 +11,7 @@ from PyQt5.QtCore import QTimer, QEventLoop, pyqtSlot, QCoreApplication
 from qgis.core import QgsFeatureRequest
 
 
-def neighbours(self, layer, feedback, totalAreas=None):
+def neighbours(self, layer, feedback, totalAreas=None, context=None):
     """
     DESCRIPTION: Function for make swap to get group holder's holdings around their seed polygons.
     The function try to swap the neighbour polygons for other holdings of the holder.
@@ -69,7 +69,7 @@ def neighbours(self, layer, feedback, totalAreas=None):
                 continue
 
             for seed in seeds:
-                neighboursIds, neighboursLayer = vgle_features.getNeighbours(self.idAttribute, layer, seed)
+                neighboursIds, neighboursLayer = vgle_features.getNeighbours(self.idAttribute, layer, seed, context=context, feedback=feedback)
                 inDistance = self.filteredDistanceMatrix[seed]
                 distanceChanges = vgle_utils.getChangableHoldings(self, inDistance)
                 localChangables = [distance for distance in distanceChanges
@@ -543,7 +543,7 @@ def neighbours_multi(self, layer, feedback, totalAreas=None):
     return layer, holdersLocalTotalArea
 
 
-def closer(self, layer, feedback, seeds=None, totalAreas=None):
+def closer(self, layer, feedback, seeds=None, totalAreas=None, context=None):
     """
     DESCRIPTION: Function for make swap to get group holder's holdings closer to their seed polygons. The function try to swap the nearby polygons for other holdings of the holder. 
     INPUTS:

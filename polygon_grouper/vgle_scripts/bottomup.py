@@ -1,5 +1,6 @@
 from qgis.PyQt.QtCore import QCoreApplication
 from qgis.core import (QgsProject,
+                       QgsApplication,
                        QgsProcessing,
                        QgsProcessingAlgorithm,
                        QgsProcessingMultiStepFeedback,
@@ -81,7 +82,7 @@ class BottomUpAlgorithm(QgsProcessingAlgorithm):
 
     def shortHelpString(self):
 
-        return self.tr("Bottom up workflow script for polygon grouper plugin")
+        return self.tr("Bottom up workflow script for polygon grouper plugin.\n Preference is given to the selected feature's.\n")
 
     def processAlgorithm(self, parameters, context, feedback):
         #import ptvsd
@@ -92,15 +93,15 @@ class BottomUpAlgorithm(QgsProcessingAlgorithm):
         if not len(inputLayer.selectedFeatures()) or inputLayer.selectedFeatureCount() == 0:
             feedback.reportError('Please select features to process', fatalError=True)
             return {}   
-        if inputLayer.selectedFeatureCount() > 1:
-            feedback.reportError('Please select only one feature to start the process', fatalError=True)
-            return {}
         if parameters['OutputDirectory'] == 'TEMPORARY_OUTPUT':
             parameters['OutputDirectory'] = tempfile.mkdtemp()
 
         tempLayer = vgle_layers.createTempLayer(inputLayer, parameters["OutputDirectory"],
                                                 'bottomup', timeStamp)
         layer, self.holderAttribute = vgle_layers.setHolderField(tempLayer, parameters["AssignedByField"])
+
+        selectedHolders = [h[self.holderAttribute] for h in inputLayer.selectedFeatures()]
+
         try:
             swappedLayer = processing.run("Polygon Grouper:polygon_grouper", {
                     'Inputlayer': layer,
@@ -122,78 +123,73 @@ class BottomUpAlgorithm(QgsProcessingAlgorithm):
             return {}
         feedback.setProgress(50)
         
-        feedback.pushInfo('Group creation started')
-        project = QgsProject.instance()
-        change_log = [layer for layer in project.mapLayers().values() if layer.name() == 'Change log'][-1]
-        holders = list(set([f['Holder ID'] for f in change_log.getFeatures()]))
-
-        #startingHolder, holders = self.selectRandomHolder(change_log, holders)
-        startingHolder = inputLayer.selectedFeatures()[0][self.holderAttribute]
-        
-        #groups = {}
-        group = [startingHolder]
-        currentHolders = [startingHolder]
-        while parameters['holdersThreshold'] >= len(group) and currentHolders:
-            feedback.pushInfo(f'Current group size: {len(group)}')
-            feedback.pushInfo(f'Current holders to process: {currentHolders}')
-            nextHolders = []
-            for currentHolder in currentHolders:
-                holderRows = [feature for feature in change_log.getFeatures() if feature['Holder ID'] == currentHolder]
-                getRows = [feature['Get from land holder ID'] for feature in holderRows 
-                if feature['Get from land holder ID'] 
-                and feature['Get from land holder ID'] not in group
-                and feature['Get from land holder ID'] in holders]
-                giveRows = [feature['Transfer to land holder ID'] for feature in holderRows 
-                if feature['Transfer to land holder ID'] 
-                and feature['Transfer to land holder ID'] not in group
-                and feature['Transfer to land holder ID'] in holders]
-
-                if startingHolder in holders:
-                    holders.remove(startingHolder)
-                for row in getRows + giveRows:
-                    if row in holders:
-                        holders.remove(row)
-
-                extendRows = list(set(getRows + giveRows))
-
-                if not extendRows:
-                    break
-
-                group.extend(extendRows)
-                nextHolders.extend(extendRows)
-
-                if parameters['holdersThreshold'] >= len(group):
-                    break
-
-            if not nextHolders:
-                break
-            else:
-                currentHolders = nextHolders
+        if parameters['holdersThreshold'] > len(selectedHolders):
+            feedback.pushInfo('Group creation started')
+            project = QgsProject.instance()
+            change_log = [layer for layer in project.mapLayers().values() if layer.name() == 'Change log'][-1]
+            holders = list(set([f['Holder ID'] for f in change_log.getFeatures()]))
             
-            
-            #groups[group[0]] = group
-            #startingHolder, holders = self.selectRandomHolder(change_log, holders)
-            #feedback.pushInfo(f'Group started from {group[0]}: {group}')
+            group = selectedHolders.copy() 
+            currentHolders = selectedHolders.copy() 
 
-        groupLayer = self.selectGroup(group, inputLayer, self.holderAttribute)
-        feedback.pushInfo('Group created')
-        groupedLayer = processing.run("Polygon Grouper:polygon_grouper", {
-                'Inputlayer': groupLayer,
-                'Preference': True,
-                'AssignedByField': [self.holderAttribute],
-                'BalancedByField': parameters['BalancedByField'],
-                'Tolerance': parameters['Tolerance'],
-                'DistanceThreshold': parameters['DistanceThreshold'],
-                'SwapToGet': parameters['SwapToGet'],
-                'OutputDirectory': parameters['OutputDirectory'],
-                'OnlySelected': False, 
-                'Single': parameters['Single'],
-                'Strict': parameters['Strict'],
-                'Simply': parameters['Simply'],
-                'Stats': True
-            }, context=context, feedback=feedback)['OUTPUT']
+            while parameters['holdersThreshold'] >= len(group) and currentHolders:
+                feedback.pushInfo(f'Current number of holders: {len(group)}')
+                feedback.pushInfo(f'Current holders to process: {currentHolders}')
+                nextHolders = []
+                for currentHolder in currentHolders:
+                    holderRows = [feature for feature in change_log.getFeatures() if feature['Holder ID'] == currentHolder]
+                    getRows = [feature['Get from land holder ID'] for feature in holderRows 
+                    if feature['Get from land holder ID'] 
+                    and feature['Get from land holder ID'] not in group
+                    and feature['Get from land holder ID'] in holders]
+                    giveRows = [feature['Transfer to land holder ID'] for feature in holderRows 
+                    if feature['Transfer to land holder ID'] 
+                    and feature['Transfer to land holder ID'] not in group
+                    and feature['Transfer to land holder ID'] in holders]
 
-        results['OUTPUT'] = groupedLayer
+                    for row in getRows + giveRows:
+                        if row in holders:
+                            holders.remove(row)
+
+                    extendRows = list(set(getRows + giveRows))
+
+                    if not extendRows:
+                        break
+
+                    group.extend(extendRows)
+                    nextHolders.extend(extendRows)
+
+                    if parameters['holdersThreshold'] >= len(group):
+                        break
+
+                if not nextHolders:
+                    break
+                else:
+                    currentHolders = nextHolders
+
+
+            groupLayer = self.selectGroup(group, inputLayer, self.holderAttribute)
+            feedback.pushInfo('Group created')
+            groupedLayer = processing.run("Polygon Grouper:polygon_grouper", {
+                    'Inputlayer': groupLayer,
+                    'Preference': True,
+                    'AssignedByField': [self.holderAttribute],
+                    'BalancedByField': parameters['BalancedByField'],
+                    'Tolerance': parameters['Tolerance'],
+                    'DistanceThreshold': parameters['DistanceThreshold'],
+                    'SwapToGet': parameters['SwapToGet'],
+                    'OutputDirectory': parameters['OutputDirectory'],
+                    'OnlySelected': False, 
+                    'Single': parameters['Single'],
+                    'Strict': parameters['Strict'],
+                    'Simply': parameters['Simply'],
+                    'Stats': True
+                }, context=context, feedback=feedback)['OUTPUT']
+
+            results['OUTPUT'] = groupedLayer
+        else:
+            results['OUTPUT'] = swappedLayer
+        inputLayer.removeSelection()
         return results
 
                 
@@ -225,6 +221,8 @@ class BottomUpAlgorithm(QgsProcessingAlgorithm):
             else:
                 expression += f'OR "{idAttribute}" = \'{part}\''
         layer.selectByExpression(expression)
+        layer.triggerRepaint()
+        QgsApplication.processEvents()
         algParams = {
             'INPUT': layer,
             'OUTPUT': 'TEMPORARY_OUTPUT'

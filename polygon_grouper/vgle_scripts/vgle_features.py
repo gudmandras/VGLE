@@ -92,7 +92,7 @@ def getHoldingsAreas(layer, areaId, idAttribute):
     return holdingsWithAreas
 
 
-def getNeighbours(idAttribute, layer, seed):
+def getNeighbours(idAttribute, layer, seed, context, feedback):
     """
     DESCRIPTION: Get neighbours holdings of a certain polygon
     INPUTS:
@@ -108,14 +108,14 @@ def getNeighbours(idAttribute, layer, seed):
         'INPUT': layer,
         'OUTPUT': 'TEMPORARY_OUTPUT'
     }
-    seedFeatures = processing.run('native:saveselectedfeatures', algParams)["OUTPUT"]
+    seedFeatures = processing.run('native:saveselectedfeatures', algParams, context=context)["OUTPUT"]
     algParams = {
         'INPUT': layer,
         'INTERSECT': seedFeatures,
         'PREDICATE': 4,
         'OUTPUT': 'TEMPORARY_OUTPUT'
     }
-    neighbours = processing.run('native:extractbylocation', algParams)["OUTPUT"]
+    neighbours = processing.run('native:extractbylocation', algParams, context=context)["OUTPUT"]
     layer.removeSelection()
 
     neighboursFeatures = neighbours.getFeatures()

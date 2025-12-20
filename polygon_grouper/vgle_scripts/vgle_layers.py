@@ -5,6 +5,7 @@ import qgis
 import processing
 
 from qgis.PyQt.QtCore import QVariant
+from PyQt5.QtCore import QCoreApplication
 from qgis.core import (QgsVectorFileWriter,
                        QgsVectorLayer,
                        QgsProject,
@@ -451,7 +452,32 @@ def cleanMergedLayer(self, toDeletAttr, layer):
     layer.updateFields()
     layer.commitChanges()
 
+def copyStyle(self, templateLayer, targetLayer):
+    if templateLayer.renderer():
+        new_renderer = templateLayer.renderer().clone()
+        targetLayer.setRenderer(new_renderer)
 
+    if templateLayer.labelsEnabled():
+        targetLayer.setLabeling(templateLayer.labeling().clone())
+        targetLayer.setLabelsEnabled(True)
+
+    renderer = targetLayer.renderer()
+    if hasattr(renderer, 'setClassAttribute'):
+        lastHolderAttribute = int(self.actualHolderAttribute.split('_')[0])
+        
+        if lastHolderAttribute == self.steps - 2:
+            offset = 2 if lastHolderAttribute >= 10 else 1
+            holderAttribute = str(lastHolderAttribute) + self.actualHolderAttribute[offset:]
+        else:
+            offset = 2 if lastHolderAttribute >= 10 else 1
+            holderAttribute = str(lastHolderAttribute - 1) + self.actualHolderAttribute[offset:]
+            
+        renderer.setClassAttribute(holderAttribute)
+    
+    targetLayer.triggerRepaint()
+    if hasattr(self, 'iface'):
+        self.iface.layerTreeView().refreshLayerLegend(targetLayer)
+"""    
 def copyStyle(self, templateLayer, targetLayer):
     tmp_qml = os.path.join(tempfile.gettempdir(), 'temp_style.qml')
     templateLayer.saveNamedStyle(tmp_qml)
@@ -476,5 +502,9 @@ def copyStyle(self, templateLayer, targetLayer):
                 holderAttribute = str(lastHolderAttribute-1) + self.actualHolderAttribute[1:]
         renderer.setClassAttribute(holderAttribute)
         targetLayer.triggerRepaint()
-
-    os.remove(tmp_qml)
+    QCoreApplication.processEvents()
+    try:
+        os.remove(tmp_qml)
+    except OSError as e:
+        print(f"Error: {tmp_qml} : {e.strerror}")
+"""

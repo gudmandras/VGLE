@@ -132,6 +132,7 @@ class PolygonGrouper(QgsProcessingAlgorithm):
         self.strict = parameters['Strict']
         self.stats = parameters['Stats']
         inputLayer = self.parameterAsVectorLayer(parameters, 'Inputlayer', context)
+        context.temporaryLayerStore().addMapLayer(inputLayer)
         if parameters['OutputDirectory'] == 'TEMPORARY_OUTPUT':
             parameters['OutputDirectory'] = tempfile.mkdtemp()
        
@@ -140,6 +141,7 @@ class PolygonGrouper(QgsProcessingAlgorithm):
         tempLayer = vgle_layers.createTempLayer(inputLayer, parameters["OutputDirectory"],
                                                 self.algorithmNames[self.algorithmIndex].lower(), timeStamp)
         layer, self.holderAttribute = vgle_layers.setHolderField(tempLayer, parameters["AssignedByField"])
+        context.temporaryLayerStore().addMapLayer(layer)
         self.holderAttributeType, self.holderAttributeLenght = \
             vgle_features.getFieldProperties(tempLayer, self.holderAttribute)
         holdersWithHoldings, holdersHoldingNumber = vgle_features.getHoldersHoldings(layer, self.holderAttribute)
@@ -188,31 +190,32 @@ class PolygonGrouper(QgsProcessingAlgorithm):
             return {}
         # Start one of the functions
         if self.algorithmIndex == 0:
-            swapedLayer, totalAreas = vgle_methods.neighbours(self, layer, feedback)
+            swapedLayer, totalAreas = vgle_methods.neighbours(self, layer, feedback, context=context)
         elif self.algorithmIndex == 1:
             oneSeedBoolean = vgle_utils.checkSeedNumber(self.seeds, feedback)
             if oneSeedBoolean:
-                swapedLayer, totalAreas = vgle_methods.closer(self, layer, feedback)
+                swapedLayer, totalAreas = vgle_methods.closer(self, layer, feedback, context=context)
             else:
                 swapedLayer = False
         elif self.algorithmIndex == 2:
             oneSeedBoolean = vgle_utils.checkSeedNumber(self.seeds, feedback)
             if oneSeedBoolean:
                 originalSeeds = copy.deepcopy(self.seeds)
-                swapedLayer, totalAreas = vgle_methods.neighbours(self, layer, feedback)
-                swapedLayer, totalAreas = vgle_methods.closer(self, swapedLayer, feedback, originalSeeds, totalAreas)
+                swapedLayer, totalAreas = vgle_methods.neighbours(self, layer, feedback, context=context)
+                swapedLayer, totalAreas = vgle_methods.closer(self, swapedLayer, feedback, originalSeeds, totalAreas, context=context)
             else:
                 swapedLayer = False
         elif self.algorithmIndex == 3:
             oneSeedBoolean = vgle_utils.checkSeedNumber(self.seeds, feedback)
             if oneSeedBoolean:
-                swapedLayer, totalAreas = vgle_methods.closer(self, layer, feedback)
-                swapedLayer, totalAreas = vgle_methods.neighbours(self, swapedLayer, feedback, totalAreas)
+                swapedLayer, totalAreas = vgle_methods.closer(self, layer, feedback, context=context)
+                swapedLayer, totalAreas = vgle_methods.neighbours(self, swapedLayer, feedback, totalAreas, context=contex)
             else:
                 swapedLayer = False
         #elif self.algorithmIndex == 4:
         #    swapedLayer = vgle_methods.hybrid_method(self, layer, feedback)
         # Save results and create merged file
+        context.temporaryLayerStore().addMapLayer(swapedLayer)
         if swapedLayer:
             feedback.setCurrentStep(self.steps-1)
 
@@ -250,10 +253,13 @@ class PolygonGrouper(QgsProcessingAlgorithm):
                         attributeName = str(lastHolderAttribute-1) + self.actualHolderAttribute[1:]
                 afterData = vgle_utils.calculateStatData(self, swapedLayer, attributeName)
                 mergedData = vgle_utils.calculateStatData(self, mergedLayer, attributeName)
-                vgle_utils.createIndicesStat(self, beforeData, afterData, mergedData)
-                vgle_utils.createExchangeLog(self, swapedLayer, attributeName)
-                vgle_utils.saveInteractionOutput(self)
-                vgle_utils.saveInteractionOutput2(self, swapedLayer, attributeName)
+                try:
+                    vgle_utils.saveInteractionOutput2(self, swapedLayer, attributeName)
+                    vgle_utils.createIndicesStat(self, beforeData, afterData, mergedData)
+                    vgle_utils.createExchangeLog(self, swapedLayer, attributeName)
+                    vgle_utils.saveInteractionOutput(self)
+                except Exception as e:
+                    feedback.pushInfo(f"No statistics generation due to no changes made: {e}")
                 # self.saveInteractionOutputGOPA(self, os.path.join(parameters["OutputDirectory"],
                 # f"{str(swapedLayer.source()[:-4])}_interactions.csv"), swapedLayer, attributeName)
                 # self.calculateShapeIndexes(self, swapedLayer, mergedLayer)

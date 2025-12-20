@@ -61,12 +61,6 @@ class TopDownAlgorithm(QgsProcessingAlgorithm):
                                                 defaultValue=False)
         simplfy.setFlags(simplfy.flags() | QgsProcessingParameterDefinition.FlagAdvanced)
         self.addParameter(simplfy)
-        holdersTreshold = QgsProcessingParameterNumber('holdersThreshold', 'Minimal number of the holder in the group',
-                                                       type=QgsProcessingParameterNumber.Integer,
-                                                       minValue=0, defaultValue=20)
-        holdersTreshold.setFlags(holdersTreshold.flags() | QgsProcessingParameterDefinition.FlagAdvanced)
-        self.addParameter(holdersTreshold)
-
 
     def tr(self, string):
         return QCoreApplication.translate('Processing', string)
@@ -117,6 +111,7 @@ class TopDownAlgorithm(QgsProcessingAlgorithm):
         tempLayer = vgle_layers.createTempLayer(inputLayer, parameters["OutputDirectory"],
                                                 'topdown', timeStamp)
         layer, self.holderAttribute = vgle_layers.setHolderField(tempLayer, parameters["AssignedByField"])
+        context.temporaryLayerStore().addMapLayer(layer)
         firstResult = processing.run("Polygon Grouper:polygon_grouper", {
                 'Inputlayer': layer,
                 'Preference': False,
@@ -138,17 +133,35 @@ class TopDownAlgorithm(QgsProcessingAlgorithm):
 
         feedback.pushInfo('Group creation started')
         project = QgsProject.instance()
-        frequency = [layerTemp for layerTemp in project.mapLayers().values() if layerTemp.name() == 'Swap frequency'][-1]
+        #frequency = [layerTemp for layerTemp in project.mapLayers().values() if layerTemp.name() == 'Swap frequency'][-1]
+        frequency = None
+        temp_layers = context.temporaryLayerStore().mapLayers().values()
+        matching_layers = [lyr for lyr in temp_layers if lyr.name() == 'Swap frequency']
+        if matching_layers:
+            frequency = matching_layers[-1]
+        else:
+            # Fallback to project only if not found in temporary store
+            project_layers = QgsProject.instance().mapLayers().values()
+            matching_layers = [lyr for lyr in project_layers if lyr.name() == 'Swap frequency']
+            if matching_layers:
+                frequency = matching_layers[-1]
+
+        if frequency.isEditable():
+            frequency.commitChanges()
+
+        csv_path = os.path.join(parameters['OutputDirectory'], f'topdown_result_{timeStamp}.csv')
+        csv_sanitized = csv_path.replace('\\', '/')
 
         result = processing.run("r:topdown", {
             'INPUT': frequency,
-            'Group': os.path.join(parameters['OutputDirectory'], f'topdown_result_{timeStamp}.csv')
-        })
+            'Group': csv_sanitized
+        }, context=context, feedback=feedback)
 
-        modularity = result['MODULARITY']
-        feedback.pushInfo(f"Modularity Score: {modularity}")
+        #modularity = result['MODULARITY']
+        #feedback.pushInfo(f"Modularity Score: {modularity}")
 
         groupsCSV = result['Group']
+        feedback.pushInfo('Group CSV created at: ' + groupsCSV)
         uri = f"file:{groupsCSV}?type=csv&geomType=none"
         csvLayer = QgsVectorLayer(uri, "csv_no_geom", "delimitedtext")
         groups = {}
@@ -160,6 +173,7 @@ class TopDownAlgorithm(QgsProcessingAlgorithm):
             assigned_holders.add(holder_id)
         none_group = max(groups.keys())
         none_group_members = [f[self.holderAttribute] for f in layer.getFeatures() if f[self.holderAttribute] not in assigned_holders]
+        
         if none_group_members:
             groups[none_group + 1] = none_group_members
         feedback.pushInfo('Group creation finished!')
@@ -167,9 +181,12 @@ class TopDownAlgorithm(QgsProcessingAlgorithm):
         feedback.pushInfo('Group processing started!')
         results['OUTPUT'] = []
         for key, group in groups.items():
-            groupLayer = self.selectGroup(group, layer, self.holderAttribute)
+            groupLayer, Sf_id = self.selectGroup(group, layer, self.holderAttribute, context)
+            try:
+                context.temporaryLayerStore().addMapLayer(groupLayer)
+            except Exception as e:
+                groupLayer = context.temporaryLayerStore().mapLayer(Sf_id)
             feedback.pushInfo(f'Group {key} processing started with {groupLayer.featureCount()} features')
-            feedback.pushInfo(str(type(groupLayer)))
             tempResult = processing.run("Polygon Grouper:polygon_grouper", {
                     'Inputlayer': groupLayer,
                     'Preference': True,
@@ -190,13 +207,16 @@ class TopDownAlgorithm(QgsProcessingAlgorithm):
                 groupedMerged = tempResult['MERGED']
                 groupedLayer.setName(f"Group {key} - {swappedLayer.name()}")
                 groupedLayer.triggerRepaint()
+                #rename_file(groupedLayer, f"Group {key} - {swappedLayer.name()}")
                 groupedMerged.setName(f"Group {key} - {mergedLayer.name()}")
                 groupedMerged.triggerRepaint()
+                #rename_file(groupedMerged, f"Group {key} - {mergedLayer.name()}")
                 layer.removeSelection()
                 results['OUTPUT'].append(groupedLayer)
             except KeyError:
                 groupedLayer = groupLayer
                 groupedLayer.setName(f"Group {key} - {swappedLayer.name()} - no changes")
+                #rename_file(groupedLayer, f"Group {key} - {swappedLayer.name()} - no changes")
                 groupedLayer.triggerRepaint()
                 layer.removeSelection()
                 QgsProject.instance().addMapLayer(groupedLayer)
@@ -207,7 +227,7 @@ class TopDownAlgorithm(QgsProcessingAlgorithm):
             #del groupLayer
         return results
 
-    def selectGroup(self, group, layer, idAttribute):
+    def selectGroup(self, group, layer, idAttribute, context):
         values = []
         fieldType = layer.fields().field(idAttribute).type()
 
@@ -226,11 +246,16 @@ class TopDownAlgorithm(QgsProcessingAlgorithm):
             'INPUT': layer,
             'OUTPUT': 'TEMPORARY_OUTPUT'
         }
-        selectedFeatures = processing.run('native:saveselectedfeatures', algParams)["OUTPUT"]
+        selectedFeatures = processing.run('native:saveselectedfeatures', algParams,  context=context)["OUTPUT"]
+        sF_id = selectedFeatures.id()
+        print(type(selectedFeatures))
+
+        if isinstance(selectedFeatures, QgsVectorLayer):
+            context.temporaryLayerStore().addMapLayer(selectedFeatures)
         loop = QEventLoop()
         QTimer.singleShot(2000, loop.quit)
         loop.exec_()
-        return selectedFeatures
+        return selectedFeatures, sF_id
 
 def is_r_provider_installed():
     registry = QgsApplication.processingRegistry()
@@ -281,3 +306,30 @@ def copyR_script(r_script_path):
         except Exception as e:
             return False   
     return True
+
+def rename_file(layer, new_name):
+    old_path = layer.source().split("|")[0]
+
+    folder = os.path.dirname(old_path)
+    old_base = os.path.splitext(os.path.basename(old_path))[0]
+    extensions = [".shp", ".shx", ".dbf", ".prj", ".cpg"]
+
+    # Remove layer from project
+    QgsProject.instance().removeMapLayer(layer.id())
+
+    layer.setDataSource("", "", "")
+    del layer
+    gc.collect()
+
+    for ext in extensions:
+        old_file = os.path.join(folder, old_base + ext)
+        new_file = os.path.join(folder, new_name + ext)
+        if os.path.exists(old_file):
+            os.rename(old_file, new_file)
+
+    # Reload layer
+    iface.addVectorLayer(
+        os.path.join(folder, new_base + ".shp"),
+        new_base,
+        "ogr"
+    )
