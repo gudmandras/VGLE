@@ -43,7 +43,6 @@ class BottomUpAlgorithm(QgsProcessingAlgorithm):
         self.addParameter(QgsProcessingParameterFolderDestination('OutputDirectory', 'Output directory',
                                                                   defaultValue=None, createByDefault=True))
         self.algorithmNames = ['Neighbours', 'Closer', "Neighbours, then closer", "Closer, then neighbours"]
-        self.counter = 0
         
         single = QgsProcessingParameterBoolean('Single', "Use single holding's holders polygons", defaultValue=False)
         single.setFlags(single.flags() | QgsProcessingParameterDefinition.FlagAdvanced)
@@ -156,11 +155,12 @@ class BottomUpAlgorithm(QgsProcessingAlgorithm):
                     if not extendRows:
                         break
 
+                    if parameters['holdersThreshold'] >= (len(group) + len(extendRows)):
+                        difference = parameters['holdersThreshold'] - len(group)
+                        extendRows = extendRows[:difference]
+
                     group.extend(extendRows)
                     nextHolders.extend(extendRows)
-
-                    if parameters['holdersThreshold'] >= len(group):
-                        break
 
                 if not nextHolders:
                     break
@@ -170,7 +170,7 @@ class BottomUpAlgorithm(QgsProcessingAlgorithm):
 
             groupLayer = self.selectGroup(group, inputLayer, self.holderAttribute)
             feedback.pushInfo('Group created')
-            groupedLayer = processing.run("Polygon Grouper:polygon_grouper", {
+            tempResult = processing.run("Polygon Grouper:polygon_grouper", {
                     'Inputlayer': groupLayer,
                     'Preference': True,
                     'AssignedByField': [self.holderAttribute],
@@ -184,8 +184,13 @@ class BottomUpAlgorithm(QgsProcessingAlgorithm):
                     'Strict': parameters['Strict'],
                     'Simply': parameters['Simply'],
                     'Stats': True
-                }, context=context, feedback=feedback)['OUTPUT']
-
+                }, context=context, feedback=feedback)
+            groupedLayer = tempResult['OUTPUT']
+            groupedMerged = tempResult['MERGED']
+            groupedLayer.setName(f"Bottomup group - {swappedLayer.name()}")
+            groupedMerged.setName(f"Bottomup group  - {mergedLayer.name()}")
+            groupedLayer.triggerRepaint()
+            groupedMerged.triggerRepaint()
             results['OUTPUT'] = groupedLayer
         else:
             results['OUTPUT'] = swappedLayer

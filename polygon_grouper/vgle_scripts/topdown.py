@@ -49,7 +49,6 @@ class TopDownAlgorithm(QgsProcessingAlgorithm):
         self.addParameter(QgsProcessingParameterFolderDestination('OutputDirectory', 'Output directory',
                                                                   defaultValue=None, createByDefault=True))
         self.algorithmNames = ['Neighbours', 'Closer', "Neighbours, then closer", "Closer, then neighbours"]
-        self.counter = 0
         
         single = QgsProcessingParameterBoolean('Single', "Use single holding's holders polygons", defaultValue=False)
         single.setFlags(single.flags() | QgsProcessingParameterDefinition.FlagAdvanced)

@@ -54,7 +54,6 @@ class PolygonGrouper(QgsProcessingAlgorithm):
         self.addParameter(QgsProcessingParameterFolderDestination('OutputDirectory', 'Output directory',
                                                                   defaultValue=None, createByDefault=True))
         self.algorithmNames = ['Neighbours', 'Closer', "Neighbours, then closer", "Closer, then neighbours"]
-        self.counter = 0
         
         onlySelected = QgsProcessingParameterBoolean('OnlySelected', 'Only use the selected features',
                                                      defaultValue=False)
@@ -132,7 +131,7 @@ class PolygonGrouper(QgsProcessingAlgorithm):
         self.strict = parameters['Strict']
         self.stats = parameters['Stats']
         inputLayer = self.parameterAsVectorLayer(parameters, 'Inputlayer', context)
-        context.temporaryLayerStore().addMapLayer(inputLayer)
+        #context.temporaryLayerStore().addMapLayer(inputLayer)
         if parameters['OutputDirectory'] == 'TEMPORARY_OUTPUT':
             parameters['OutputDirectory'] = tempfile.mkdtemp()
        

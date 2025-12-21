@@ -22,7 +22,7 @@ def neighbours(self, layer, feedback, totalAreas=None, context=None):
     """
     #import ptvsd
     #ptvsd.debug_this_thread()
-    changes = 1
+    changes = 0
     changer = True
     self.globalChangables = vgle_utils.getChangableHoldings(self)
 
@@ -192,11 +192,11 @@ def neighbours(self, layer, feedback, totalAreas=None, context=None):
                                         difference = abs(newHolderTotalArea-holderTotalArea)
                                         if totalAreaDifference == -999:
                                             if thresholdHolder and thresholdNeighbour:
-                                                holderNewHoldignNum = self.holdersHoldingNumber[holder] - len(combination) + len(neighbourCombination)
+                                                holderNewHoldignNum = self.holdersHoldingNumber[holder] - len(combination) + len(neighbourCombination) - 1
                                                 targetNewHoldingNum = self.holdersHoldingNumber[neighbourHolder] - len(neighbourCombination) + len(combination)
                                                 if self.strict:
-                                                    if holderNewHoldignNum > self.holdersHoldingNumber[holder] and targetNewHoldingNum > self.holdersHoldingNumber[neighbourHolder]:
-                                                        break
+                                                    if holderNewHoldignNum > self.holdersHoldingNumber[holder] or targetNewHoldingNum > self.holdersHoldingNumber[neighbourHolder]:
+                                                        continue
                                                 holderCombinationForChange = combination
                                                 neighbourCombinationForChange = neighbourCombination
                                                 holderNewTotalArea = newHolderTotalArea
@@ -204,11 +204,11 @@ def neighbours(self, layer, feedback, totalAreas=None, context=None):
                                                 totalAreaDifference = difference
                                         else:
                                             if thresholdHolder and thresholdNeighbour and difference < totalAreaDifference:
-                                                holderNewHoldignNum = self.holdersHoldingNumber[holder] - len(combination) + len(neighbourCombination)
+                                                holderNewHoldignNum = self.holdersHoldingNumber[holder] - len(combination) + len(neighbourCombination) - 1
                                                 targetNewHoldingNum = self.holdersHoldingNumber[neighbourHolder] - len(neighbourCombination) + len(combination)
                                                 if self.strict:
-                                                    if holderNewHoldignNum > self.holdersHoldingNumber[holder] and targetNewHoldingNum > self.holdersHoldingNumber[neighbourHolder]:
-                                                        break
+                                                    if holderNewHoldignNum > self.holdersHoldingNumber[holder] or targetNewHoldingNum > self.holdersHoldingNumber[neighbourHolder]:
+                                                        continue
                                                 holderCombinationForChange = combination
                                                 neighbourCombinationForChange = neighbourCombination
                                                 holderNewTotalArea = newHolderTotalArea
@@ -230,20 +230,16 @@ def neighbours(self, layer, feedback, totalAreas=None, context=None):
                             holdersLocalTotalArea[neighbourHolder] = neighbourNewTotalArea                            
                 not_changables.extend(changesIds)
 
-        if turn == 1:
+
+        if self.counter == 0:
             feedback.pushInfo(f'Changes in turn {turn}: {self.counter}') 
             logging.debug(f'Changes in turn {turn}: {self.counter}')
-            if changes == 0:
-                changer = False
-            else:
-                changes = copy.deepcopy(self.counter)
-        elif self.algorithmIndex == 3 and changes == 1 and turn <= (self.steps/2)-2:
-            changes = copy.deepcopy(self.counter)
-            feedback.pushInfo(f'Changes in turn {turn}: {self.counter}') 
-            logging.debug(f'Changes in turn {turn}: {self.counter}')
+            changer = False
+            if (self.algorithmIndex == 0 or self.algorithmIndex == 3): 
+                return None, None
         else:
+            feedback.pushInfo(f'Changes in turn {turn}: {self.counter-changes}') 
             logging.debug(f'Changes in turn {turn}: {self.counter-changes}')
-            feedback.pushInfo(f'Changes in turn {turn}: {self.counter-changes}')
             if changes == self.counter:
                 changer = False
                 layer.startEditing()
@@ -253,10 +249,11 @@ def neighbours(self, layer, feedback, totalAreas=None, context=None):
                 layer.deleteAttributes(indexes)
                 layer.updateFields()
                 layer.commitChanges()
+                return layer, holdersLocalTotalArea
             elif (self.algorithmIndex == 0 or self.algorithmIndex == 3) and (turn == self.steps-3):
                 changer = False
             elif self.algorithmIndex == 2 and turn == (self.steps/2)-3:
-                changer = False
+                changer = False 
             else:
                 changes = copy.deepcopy(self.counter)
         feedback.setCurrentStep(1 + turn)
