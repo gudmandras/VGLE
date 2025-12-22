@@ -16,6 +16,7 @@ from qgis.core import (QgsProject,
                        QgsProcessingParameterNumber,
                        QgsProcessingParameterEnum,
                        QgsProcessingParameterField,
+                       QgsProcessingParameterString,
                        QgsProcessingParameterDefinition,
                        QgsProcessingParameterFolderDestination)
 from qgis import processing
@@ -46,6 +47,7 @@ class TopDownAlgorithm(QgsProcessingAlgorithm):
                                                      options=['Neighbours', 'Closer', 'Neighbours, then closer',
                                                               'Closer, then neighbours'],
                                                      allowMultiple=False, defaultValue='Neighbours'))
+        self.addParameter(QgsProcessingParameterString('Postfix', 'Postfix for the group files', defaultValue='first run'))
         self.addParameter(QgsProcessingParameterFolderDestination('OutputDirectory', 'Output directory',
                                                                   defaultValue=None, createByDefault=True))
         self.algorithmNames = ['Neighbours', 'Closer', "Neighbours, then closer", "Closer, then neighbours"]
@@ -204,17 +206,17 @@ class TopDownAlgorithm(QgsProcessingAlgorithm):
             try:
                 groupedLayer = tempResult['OUTPUT']
                 groupedMerged = tempResult['MERGED']
-                groupedLayer.setName(f"Group {key} - {swappedLayer.name()}")
+                groupedLayer.setName(f"Group {key} - {swappedLayer.name()} - {parameters['Postfix']}")
                 groupedLayer.triggerRepaint()
                 #rename_file(groupedLayer, f"Group {key} - {swappedLayer.name()}")
-                groupedMerged.setName(f"Group {key} - {mergedLayer.name()}")
+                groupedMerged.setName(f"Group {key} - {mergedLayer.name()} - {parameters['Postfix']}")
                 groupedMerged.triggerRepaint()
                 #rename_file(groupedMerged, f"Group {key} - {mergedLayer.name()}")
                 layer.removeSelection()
                 results['OUTPUT'].append(groupedLayer)
             except KeyError:
                 groupedLayer = groupLayer
-                groupedLayer.setName(f"Group {key} - {swappedLayer.name()} - no changes")
+                groupedLayer.setName(f"Group {key} - {swappedLayer.name()} - {parameters['Postfix']} no changes")
                 #rename_file(groupedLayer, f"Group {key} - {swappedLayer.name()} - no changes")
                 groupedLayer.triggerRepaint()
                 layer.removeSelection()

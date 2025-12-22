@@ -553,7 +553,7 @@ def createIndicesStat(self, beforeData, afterData, mergedData):
         feature['AE # of parcels'] = mergedData[holder]['ParcelNumber']
         feature['AE Area (ha)'] = afterData[holder]['TotalArea']
         feature['AE Distance (m)'] = afterData[holder]['AverageDistance']
-        feature['Dif # of parcels'] = afterData[holder]['ParcelNumber'] - mergedData[holder]['ParcelNumber']
+        feature['Dif # of parcels'] =beforeData[holder]['ParcelNumber'] - mergedData[holder]['ParcelNumber']
         feature['Dif Area (ha)'] = afterData[holder]['TotalArea'] - beforeData[holder]['TotalArea']
         feature['Dif Distance (m)'] = afterData[holder]['AverageDistance'] - beforeData[holder]['AverageDistance']
         feature['HFI (%)'] = (1 - (mergedData[holder]['ParcelNumber'] / beforeData[holder]['ParcelNumber'])) * 100

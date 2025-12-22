@@ -102,7 +102,7 @@ class BottomUpAlgorithm(QgsProcessingAlgorithm):
         selectedHolders = [h[self.holderAttribute] for h in inputLayer.selectedFeatures()]
 
         try:
-            swappedLayer = processing.run("Polygon Grouper:polygon_grouper", {
+            tempResult0 = processing.run("Polygon Grouper:polygon_grouper", {
                     'Inputlayer': layer,
                     'Preference': True,
                     'AssignedByField': [self.holderAttribute],
@@ -116,7 +116,9 @@ class BottomUpAlgorithm(QgsProcessingAlgorithm):
                     'Strict': parameters['Strict'],
                     'Simply': parameters['Simply'],
                     'Stats': True
-                }, context=context, feedback=feedback)['OUTPUT']
+                }, context=context, feedback=feedback)
+            swappedLayer = tempResult0['OUTPUT']
+            mergedLayer = tempResult0['MERGED']
         except KeyError as e:
             feedback.reportError('No change was made - bottom up process terminated!', fatalError=True)
             return {}
@@ -136,6 +138,7 @@ class BottomUpAlgorithm(QgsProcessingAlgorithm):
                 feedback.pushInfo(f'Current holders to process: {currentHolders}')
                 nextHolders = []
                 for currentHolder in currentHolders:
+                    extendRows = []
                     holderRows = [feature for feature in change_log.getFeatures() if feature['Holder ID'] == currentHolder]
                     getRows = [feature['Get from land holder ID'] for feature in holderRows 
                     if feature['Get from land holder ID'] 
@@ -146,34 +149,41 @@ class BottomUpAlgorithm(QgsProcessingAlgorithm):
                     and feature['Transfer to land holder ID'] not in group
                     and feature['Transfer to land holder ID'] in holders]
 
-                    for row in getRows + giveRows:
-                        if row in holders:
-                            holders.remove(row)
-
                     extendRows = list(set(getRows + giveRows))
 
                     if not extendRows:
-                        break
+                        continue
+                
+                    for row in extendRows:
+                        if row in holders:
+                            holders.remove(row)
 
-                    if parameters['holdersThreshold'] >= (len(group) + len(extendRows)):
+                    if parameters['holdersThreshold'] < (len(group) + len(extendRows)):
                         difference = parameters['holdersThreshold'] - len(group)
                         extendRows = extendRows[:difference]
-
-                    group.extend(extendRows)
-                    nextHolders.extend(extendRows)
+                        group.extend(extendRows)
+                        nextHolders = []
+                        break
+                    else:
+                        group.extend(extendRows)
+                        nextHolders.extend(extendRows)
 
                 if not nextHolders:
                     break
                 else:
                     currentHolders = nextHolders
+            feedback.pushInfo(f'Final group len: {len(group)} - members:{group}')
 
+            fields = swappedLayer.fields()
+            last_index = fields.count() - 1
+            last_field_name = fields.at(last_index).name()
 
-            groupLayer = self.selectGroup(group, inputLayer, self.holderAttribute)
+            groupLayer = self.selectGroup(group, swappedLayer, last_field_name)
             feedback.pushInfo('Group created')
             tempResult = processing.run("Polygon Grouper:polygon_grouper", {
                     'Inputlayer': groupLayer,
                     'Preference': True,
-                    'AssignedByField': [self.holderAttribute],
+                    'AssignedByField': [last_field_name],
                     'BalancedByField': parameters['BalancedByField'],
                     'Tolerance': parameters['Tolerance'],
                     'DistanceThreshold': parameters['DistanceThreshold'],
@@ -185,15 +195,52 @@ class BottomUpAlgorithm(QgsProcessingAlgorithm):
                     'Simply': parameters['Simply'],
                     'Stats': True
                 }, context=context, feedback=feedback)
-            groupedLayer = tempResult['OUTPUT']
-            groupedMerged = tempResult['MERGED']
-            groupedLayer.setName(f"Bottomup group - {swappedLayer.name()}")
-            groupedMerged.setName(f"Bottomup group  - {mergedLayer.name()}")
-            groupedLayer.triggerRepaint()
-            groupedMerged.triggerRepaint()
-            results['OUTPUT'] = groupedLayer
+            try:
+                groupedLayer = tempResult['OUTPUT']
+                groupedMerged = tempResult['MERGED']
+                groupedLayer.setName(f"Bottomup group - {swappedLayer.name()}")
+                groupedMerged.setName(f"Bottomup group  - {mergedLayer.name()}")
+                groupedLayer.triggerRepaint()
+                groupedMerged.triggerRepaint()
+                results['OUTPUT'] = groupedLayer
+            except KeyError:
+                feedback.pushInfo('No changes were made for the created group')
+                results['OUTPUT'] = swappedLayer
+                results['MERGED'] = mergedLayer
         else:
-            results['OUTPUT'] = swappedLayer
+            group = selectedHolders.copy() 
+            fields = swappedLayer.fields()
+            last_index = fields.count() - 1
+            last_field_name = fields.at(last_index).name()
+
+            groupLayer = self.selectGroup(group, swappedLayer, last_field_name)
+            tempResult = processing.run("Polygon Grouper:polygon_grouper", {
+                'Inputlayer': groupLayer,
+                'Preference': True,
+                'AssignedByField': [last_field_name],
+                'BalancedByField': parameters['BalancedByField'],
+                'Tolerance': parameters['Tolerance'],
+                'DistanceThreshold': parameters['DistanceThreshold'],
+                'SwapToGet': parameters['SwapToGet'],
+                'OutputDirectory': parameters['OutputDirectory'],
+                'OnlySelected': False, 
+                'Single': parameters['Single'],
+                'Strict': parameters['Strict'],
+                'Simply': parameters['Simply'],
+                'Stats': True
+            }, context=context, feedback=feedback)
+            try:
+                groupedLayer = tempResult['OUTPUT']
+                groupedMerged = tempResult['MERGED']
+                groupedLayer.setName(f"Bottomup group - {swappedLayer.name()}")
+                groupedMerged.setName(f"Bottomup group  - {mergedLayer.name()}")
+                groupedLayer.triggerRepaint()
+                groupedMerged.triggerRepaint()
+                results['OUTPUT'] = groupedLayer
+            except KeyError:
+                feedback.pushInfo('No changes were made for the created group')
+                results['OUTPUT'] = swappedLayer
+                results['MERGED'] = mergedLayer
         inputLayer.removeSelection()
         return results
 
