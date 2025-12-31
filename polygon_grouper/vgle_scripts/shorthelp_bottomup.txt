@@ -1,4 +1,10 @@
-<html><body><h2>Algorithm description</h2>
+<html><body>
+<h2>Bottomup description</h2>
+<h3>ADAM AND GEDAMU PLEASE WRITE DESCRIPTION OF THE BOTTOMUP SCRIPT HERE!!!</h3>
+<p>One additional parameter added to this script. All other parameters are the same as in the original plugin, which are listed after the new parameter.</p>
+<h3>Maximal number of the holder in the group. (Additional)</h3>
+<p>Desired maximal number of the holders in the new group.</p>
+<h2>Algorithm description</h2>
     <p>This algorithm is employed for the purpose of regrouping polygons. The regrouping process entails the exchange of holder values in the 'holder field' between two or more polygons, on the condition that the sum of the values in the 'balanced by field' for the two holders is identical or the difference prior to and following the swap is less than a specified threshold. The objective of the process is to maximise the adjacency of the holders' polygons, or alternatively to minimise the separation between them, or both. The development of this algorithm was primarily to support the reduction of land fragmentation by land exchange, yet it is sufficiently general to be applied to a number of other areas, including the regrouping of agent territories or analogous geometric tasks.</p>
     <h2>Input parameters</h2>
     <h3>Input layer</h3>

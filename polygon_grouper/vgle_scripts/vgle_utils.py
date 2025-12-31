@@ -505,7 +505,7 @@ def calculateCompositeNumber(self, seed, featureId):
     return area*distance
 
 
-def createIndicesStat(self, beforeData, afterData, mergedData):
+def createIndicesStat(self, beforeData, mergedBeforeData, afterData, mergedData):
     """
     DESCRIPTION: Create statistics about the plugin run. Three statistics generate
     INPUTS:
@@ -523,18 +523,24 @@ def createIndicesStat(self, beforeData, afterData, mergedData):
         indicators_data.addAttributes([QgsField('Holder ID', QVariant.String, len=self.holderAttributeLenght)])
     else:
         indicators_data.addAttributes([QgsField('Holder ID', QVariant.Int)])
-    indicators_data.addAttributes([QgsField('BE # of parcels', QVariant.Int)])
-    indicators_data.addAttributes([QgsField('BE Area (ha)', QVariant.Double, "float", 10, 3)])
-    indicators_data.addAttributes([QgsField('BE Distance (m)', QVariant.Double, "float", 10, 3)])
-    indicators_data.addAttributes([QgsField('AE # of parcels', QVariant.Int)])
-    indicators_data.addAttributes([QgsField('AE Area (ha)', QVariant.Double, "float", 10, 3)])
-    indicators_data.addAttributes([QgsField('AE Distance (m)', QVariant.Double, "float", 10, 3)])
-    indicators_data.addAttributes([QgsField('Dif # of parcels', QVariant.Int)])
-    indicators_data.addAttributes([QgsField('Dif Area (ha)', QVariant.Double, "float", 10, 3)])
-    indicators_data.addAttributes([QgsField('Dif Distance (m)', QVariant.Double, "float", 10, 3)])
-    indicators_data.addAttributes([QgsField('HFI (%)', QVariant.Double, "float", 10, 3)])
-    indicators_data.addAttributes([QgsField('PFI (%)', QVariant.Double, "float", 10, 3)])
-    indicators_data.addAttributes([QgsField('HDI (%)', QVariant.Double, "float", 10, 3)])
+    indicators_data.addAttributes([QgsField('BE # of parcels (HFI)', QVariant.Int)])
+    indicators_data.addAttributes([QgsField('BE Total Area (ha) (PFI)', QVariant.Double, "float", 10, 3)])
+    indicators_data.addAttributes([QgsField('BE Distance (m) (HDI)', QVariant.Double, "float", 10, 3)])
+    indicators_data.addAttributes([QgsField('BE HFI', QVariant.Double, "float", 10, 3)])
+    indicators_data.addAttributes([QgsField('BE PFI', QVariant.Double, "float", 10, 3)])
+    indicators_data.addAttributes([QgsField('BE HDI', QVariant.Double, "float", 10, 3)])
+    indicators_data.addAttributes([QgsField('AE # of parcels (HFI)', QVariant.Int)])
+    indicators_data.addAttributes([QgsField('AE Total Area (ha) (PFI)', QVariant.Double, "float", 10, 3)])
+    indicators_data.addAttributes([QgsField('AE Distance (m) (HDI)', QVariant.Double, "float", 10, 3)])
+    indicators_data.addAttributes([QgsField('Dif # of parcels (HFI)', QVariant.Int)])
+    indicators_data.addAttributes([QgsField('Dif Total Area (ha) (PFI)', QVariant.Double, "float", 10, 3)])
+    indicators_data.addAttributes([QgsField('Dif Distance (m) (HDI)', QVariant.Double, "float", 10, 3)])
+    indicators_data.addAttributes([QgsField('AE HFI', QVariant.Double, "float", 10, 3)])
+    indicators_data.addAttributes([QgsField('AE PFI', QVariant.Double, "float", 10, 3)])
+    indicators_data.addAttributes([QgsField('AE HDI', QVariant.Double, "float", 10, 3)])
+    indicators_data.addAttributes([QgsField('CH HFI', QVariant.Double, "float", 10, 3)])
+    indicators_data.addAttributes([QgsField('CH PFI', QVariant.Double, "float", 10, 3)])
+    indicators_data.addAttributes([QgsField('CH HDI', QVariant.Double, "float", 10, 3)])
     indicators_data.addAttributes([QgsField('Change num', QVariant.Int)])
     indicators.updateFields()
 
@@ -547,22 +553,43 @@ def createIndicesStat(self, beforeData, afterData, mergedData):
         feature.setFields(fields)
         feature['Number'] = turn
         feature['Holder ID'] = holder
-        feature['BE # of parcels'] = beforeData[holder]['ParcelNumber']
-        feature['BE Area (ha)'] = beforeData[holder]['TotalArea']
-        feature['BE Distance (m)'] = beforeData[holder]['AverageDistance']
-        feature['AE # of parcels'] = mergedData[holder]['ParcelNumber']
-        feature['AE Area (ha)'] = afterData[holder]['TotalArea']
-        feature['AE Distance (m)'] = afterData[holder]['AverageDistance']
-        feature['Dif # of parcels'] =beforeData[holder]['ParcelNumber'] - mergedData[holder]['ParcelNumber']
-        feature['Dif Area (ha)'] = afterData[holder]['TotalArea'] - beforeData[holder]['TotalArea']
-        feature['Dif Distance (m)'] = afterData[holder]['AverageDistance'] - beforeData[holder]['AverageDistance']
-        feature['HFI (%)'] = (1 - (mergedData[holder]['ParcelNumber'] / beforeData[holder]['ParcelNumber'])) * 100
-        feature['PFI (%)'] = ((afterData[holder]['TotalArea'] / beforeData[holder]['TotalArea']) - 1) * 100
+        feature['BE # of parcels (HFI)'] = beforeData[holder]['ParcelNumber']
+        feature['BE Total Area (ha) (PFI)'] = beforeData[holder]['TotalArea']
+        feature['BE Distance (m) (HDI)'] = beforeData[holder]['AverageDistance']
+        feature['BE HFI'] = (1 - (mergedBeforeData[holder]['ParcelNumber'] / beforeData[holder]['ParcelNumber'])) * 100
+        feature['BE PFI'] = round(beforeData[holder]['TotalArea']/beforeData[holder]['ParcelNumber'], 3)
         try:
-            feature['HDI (%)'] = (1 - (afterData[holder]['AverageDistance'] /
+            feature['BE HDI'] = (1 - (mergedBeforeData[holder]['AverageDistance'] /
                                        beforeData[holder]['AverageDistance'])) * 100
         except ZeroDivisionError:
-            feature['HDI (%)'] = 0
+            feature['BE HDI'] = 0
+        feature['AE # of parcels (HFI)'] = mergedData[holder]['ParcelNumber']
+        feature['AE Total Area (ha) (PFI)'] = afterData[holder]['TotalArea']
+        feature['AE Distance (m) (HDI)'] = afterData[holder]['AverageDistance']
+        feature['Dif # of parcels (HFI)'] = mergedData[holder]['ParcelNumber'] - beforeData[holder]['ParcelNumber']
+        feature['Dif Total Area (ha) (PFI)'] = afterData[holder]['TotalArea'] - beforeData[holder]['TotalArea']
+        feature['Dif Distance (m) (HDI)'] = mergedData[holder]['AverageDistance'] - beforeData[holder]['AverageDistance']
+        feature['AE HFI'] = (1 - (mergedData[holder]['ParcelNumber'] / beforeData[holder]['ParcelNumber'])) * 100
+        feature['AE PFI'] = round(afterData[holder]['TotalArea']/mergedData[holder]['ParcelNumber'], 3)
+        try:
+            feature['AE HDI'] = (1 - (afterData[holder]['AverageDistance'] /
+                                       beforeData[holder]['AverageDistance'])) * 100
+        except ZeroDivisionError:
+            feature['AE HDI'] = 0
+        try:
+            feature['CH HFI'] = ((1 - (mergedBeforeData[holder]['ParcelNumber'] / beforeData[holder]['ParcelNumber'])) * 100)/((1 - (mergedData[holder]['ParcelNumber'] / beforeData[holder]['ParcelNumber'])) * 100)
+        except ZeroDivisionError:
+            feature['CH HFI'] = 0
+        try:
+            feature['CH PFI'] = (round(beforeData[holder]['TotalArea']/beforeData[holder]['ParcelNumber'], 3))/(round(afterData[holder]['TotalArea']/mergedData[holder]['ParcelNumber'], 3))
+        except ZeroDivisionError:
+            feature['CH PFI'] = 0
+        try:
+            feature['CH HDI'] =  ((1 - (mergedBeforeData[holder]['AverageDistance'] /
+                                       beforeData[holder]['AverageDistance'])) * 100) / ((1 - (afterData[holder]['AverageDistance'] /
+                                       beforeData[holder]['AverageDistance'])) * 100)
+        except ZeroDivisionError:
+            feature['CH HDI'] = 0
         change_num = 0
         for holderAgain in holders:
             change_num += self.interactionTable[holder][holderAgain]
@@ -571,7 +598,7 @@ def createIndicesStat(self, beforeData, afterData, mergedData):
 
     indicators_data.addFeatures(feats)
     indicators.commitChanges()
-    QgsProject.instance().addMapLayer(indicators)
+    QgsProject.instance().addMapLayer(indicators, False)
     root = QgsProject().instance().layerTreeRoot()
     root.insertLayer(0, indicators)
 
@@ -669,7 +696,7 @@ def createExchangeLog(self, layer, actualHoldingId):
 
     log_data.addFeatures(feats)
     log.commitChanges()
-    QgsProject.instance().addMapLayer(log)
+    QgsProject.instance().addMapLayer(log, False)
     root = QgsProject().instance().layerTreeRoot()
     root.insertLayer(0, log)
 
@@ -747,7 +774,7 @@ def saveInteractionOutput(self):
             log.commitChanges()
 
     log.commitChanges()
-    QgsProject.instance().addMapLayer(log)
+    QgsProject.instance().addMapLayer(log, False)
     root = QgsProject().instance().layerTreeRoot()
     root.insertLayer(0, log)  
 
@@ -861,7 +888,7 @@ def saveInteractionOutput2(self, layer, actualHoldingId):
         log_data.addFeature(feature)
         log.commitChanges()
 
-    QgsProject.instance().addMapLayer(log)
+    QgsProject.instance().addMapLayer(log, False)
     root = QgsProject().instance().layerTreeRoot()
     root.insertLayer(0, log)  
 
@@ -930,6 +957,8 @@ def update_areas_and_distances(self, holder, targetHolder, holderComb, targetCom
             distance = vgle_features.calculateDistance(self, h, targetSeed, layer)
             self.holdingWithSeedDistance[t] = distance
         self.totalDistances[holder] += self.holdingWithSeedDistance[t]
+        self.holdersHoldingNumber[holder] += len(targetComb) - len(holderComb)
+        self.holdersHoldingNumber[targetHolder] += len(holderComb) - len(targetComb)
 
 def split_centroids_to_chunks(centroids, outputDirectory, chunkSize):
     layer = QgsVectorLayer(centroids, "centroids", "ogr")

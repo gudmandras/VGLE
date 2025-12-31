@@ -55,9 +55,12 @@ class TopDownAlgorithm(QgsProcessingAlgorithm):
         single = QgsProcessingParameterBoolean('Single', "Use single holding's holders polygons", defaultValue=False)
         single.setFlags(single.flags() | QgsProcessingParameterDefinition.FlagAdvanced)
         self.addParameter(single)
-        strict = QgsProcessingParameterBoolean('Strict', "Strict conditions for neighbours method", defaultValue=False)
+        strict = QgsProcessingParameterBoolean('StrictHDI', "Strict condition on Holding Distance Indicator (HDI)", defaultValue=False)
         strict.setFlags(strict.flags() | QgsProcessingParameterDefinition.FlagAdvanced)
         self.addParameter(strict)
+        strict2 = QgsProcessingParameterBoolean('StrictHFI', "Strict condition on Holding Fragmentation Indicator (HFI)", defaultValue=False)
+        strict2.setFlags(strict2.flags() | QgsProcessingParameterDefinition.FlagAdvanced)
+        self.addParameter(strict2)
         simplfy = QgsProcessingParameterBoolean('Simply', "Simply algorithm to process big dataset",
                                                 defaultValue=False)
         simplfy.setFlags(simplfy.flags() | QgsProcessingParameterDefinition.FlagAdvanced)
@@ -82,8 +85,14 @@ class TopDownAlgorithm(QgsProcessingAlgorithm):
         return ''
 
     def shortHelpString(self):
-
-        return self.tr("Top down  workflow script for polygon grouper plugin")
+        try:
+            with open(os.path.join(os.path.dirname(__file__), 'shorthelp_topdown.txt'), 'r',
+                      encoding='utf-8') as file:
+                return file.read()
+        except FileNotFoundError:
+            return "<html><body><p>Description file not found.</p></body></html>"
+        except Exception as e:
+            return f"<html><body><p>Error reading description file: {e}</p></body></html>"
 
     def processAlgorithm(self, parameters, context, feedback):
         #import ptvsd
@@ -124,7 +133,8 @@ class TopDownAlgorithm(QgsProcessingAlgorithm):
                 'OutputDirectory': parameters['OutputDirectory'],
                 'OnlySelected': False, 
                 'Single': parameters['Single'],
-                'Strict': parameters['Strict'],
+                'StrictHDI': parameters['StrictHDI'],
+                'StrictHFI': parameters['StrictHFI'],
                 'Simply': parameters['Simply'],
                 'Stats': True
             }, context=context, feedback=feedback)
@@ -199,7 +209,8 @@ class TopDownAlgorithm(QgsProcessingAlgorithm):
                     'OutputDirectory': parameters['OutputDirectory'],
                     'OnlySelected': False, 
                     'Single': parameters['Single'],
-                    'Strict': parameters['Strict'],
+                    'StrictHDI': parameters['StrictHDI'],
+                    'StrictHFI': parameters['StrictHFI'],
                     'Simply': parameters['Simply'],
                     'Stats': False
                 }, context=context, feedback=feedback)
@@ -220,7 +231,7 @@ class TopDownAlgorithm(QgsProcessingAlgorithm):
                 #rename_file(groupedLayer, f"Group {key} - {swappedLayer.name()} - no changes")
                 groupedLayer.triggerRepaint()
                 layer.removeSelection()
-                QgsProject.instance().addMapLayer(groupedLayer)
+                QgsProject.instance().addMapLayer(groupedLayer, False)
                 root = QgsProject().instance().layerTreeRoot()
                 root.insertLayer(0, groupedLayer)
                 results['OUTPUT'].append(groupedLayer)

@@ -370,17 +370,20 @@ def createMergedFile(self, layer, directory):
             directory: String, absolute path to save the new layer
     OUTPUTS: None
     """
-    lastHolderAttribute = int(self.actualHolderAttribute.split('_')[0])
-    if lastHolderAttribute == self.steps-2:
-        if self.steps-2 >= 10:
-            attributeName = str(lastHolderAttribute) + self.actualHolderAttribute[2:]
+    try:
+        lastHolderAttribute = int(self.actualHolderAttribute.split('_')[0])
+        if lastHolderAttribute == self.steps-2:
+            if self.steps-2 >= 10:
+                attributeName = str(lastHolderAttribute) + self.actualHolderAttribute[2:]
+            else:
+                attributeName = str(lastHolderAttribute) + self.actualHolderAttribute[1:]
         else:
-            attributeName = str(lastHolderAttribute) + self.actualHolderAttribute[1:]
-    else:
-        if lastHolderAttribute >= 10:
-            attributeName = str(lastHolderAttribute-1) + self.actualHolderAttribute[2:]
-        else:
-            attributeName = str(lastHolderAttribute-1) + self.actualHolderAttribute[1:]
+            if lastHolderAttribute >= 10:
+                attributeName = str(lastHolderAttribute-1) + self.actualHolderAttribute[2:]
+            else:
+                attributeName = str(lastHolderAttribute-1) + self.actualHolderAttribute[1:]
+    except AttributeError:
+        attributeName = self.holderAttribute
 
     algParams = {
         'EXPRESSION': f'array_contains (overlay_touches (@layer, \"{attributeName}\", limit:=-1), \"{attributeName}\")',
@@ -477,6 +480,12 @@ def copyStyle(self, templateLayer, targetLayer):
     targetLayer.triggerRepaint()
     if hasattr(self, 'iface'):
         self.iface.layerTreeView().refreshLayerLegend(targetLayer)
+
+def copyLayer(layer, new_name):
+    copyLayer = layer.clone()
+    copyLayer.setName(new_name)
+    return copyLayer
+
 """    
 def copyStyle(self, templateLayer, targetLayer):
     tmp_qml = os.path.join(tempfile.gettempdir(), 'temp_style.qml')

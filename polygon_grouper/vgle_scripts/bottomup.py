@@ -12,7 +12,7 @@ from qgis.core import (QgsProject,
                        QgsProcessingParameterDefinition,
                        QgsProcessingParameterFolderDestination)
 from qgis import processing
-import random, tempfile, time
+import random, tempfile, time, os
 from datetime import datetime
 from . import vgle_layers
 
@@ -47,14 +47,17 @@ class BottomUpAlgorithm(QgsProcessingAlgorithm):
         single = QgsProcessingParameterBoolean('Single', "Use single holding's holders polygons", defaultValue=False)
         single.setFlags(single.flags() | QgsProcessingParameterDefinition.FlagAdvanced)
         self.addParameter(single)
-        strict = QgsProcessingParameterBoolean('Strict', "Strict conditions for neighbours method", defaultValue=False)
+        strict = QgsProcessingParameterBoolean('StrictHDI', "Strict condition on Holding Distance Indicator (HDI)", defaultValue=False)
         strict.setFlags(strict.flags() | QgsProcessingParameterDefinition.FlagAdvanced)
         self.addParameter(strict)
+        strict2 = QgsProcessingParameterBoolean('StrictHFI', "Strict condition on Holding Fragmentation Indicator (HFI)", defaultValue=False)
+        strict2.setFlags(strict2.flags() | QgsProcessingParameterDefinition.FlagAdvanced)
+        self.addParameter(strict2)
         simplfy = QgsProcessingParameterBoolean('Simply', "Simply algorithm to process big dataset",
                                                 defaultValue=False)
         simplfy.setFlags(simplfy.flags() | QgsProcessingParameterDefinition.FlagAdvanced)
         self.addParameter(simplfy)
-        holdersTreshold = QgsProcessingParameterNumber('holdersThreshold', 'Minimal number of the holder in the group',
+        holdersTreshold = QgsProcessingParameterNumber('holdersThreshold', 'Maximal number of the holder in the group',
                                                        type=QgsProcessingParameterNumber.Integer,
                                                        minValue=0, defaultValue=20)
         holdersTreshold.setFlags(holdersTreshold.flags() | QgsProcessingParameterDefinition.FlagAdvanced)
@@ -80,8 +83,14 @@ class BottomUpAlgorithm(QgsProcessingAlgorithm):
         return ''
 
     def shortHelpString(self):
-
-        return self.tr("Bottom up workflow script for polygon grouper plugin.\n Preference is given to the selected feature's.\n")
+        try:
+            with open(os.path.join(os.path.dirname(__file__), 'shorthelp_bottomup.txt'), 'r',
+                      encoding='utf-8') as file:
+                return file.read()
+        except FileNotFoundError:
+            return "<html><body><p>Description file not found.</p></body></html>"
+        except Exception as e:
+            return f"<html><body><p>Error reading description file: {e}</p></body></html>"
 
     def processAlgorithm(self, parameters, context, feedback):
         #import ptvsd
@@ -113,7 +122,8 @@ class BottomUpAlgorithm(QgsProcessingAlgorithm):
                     'OutputDirectory': parameters['OutputDirectory'],
                     'OnlySelected': False, 
                     'Single': parameters['Single'],
-                    'Strict': parameters['Strict'],
+                    'StrictHDI': parameters['StrictHDI'],
+                    'StrictHFI': parameters['StrictHFI'],
                     'Simply': parameters['Simply'],
                     'Stats': True
                 }, context=context, feedback=feedback)
@@ -191,7 +201,8 @@ class BottomUpAlgorithm(QgsProcessingAlgorithm):
                     'OutputDirectory': parameters['OutputDirectory'],
                     'OnlySelected': False, 
                     'Single': parameters['Single'],
-                    'Strict': parameters['Strict'],
+                    'StrictHDI': parameters['StrictHDI'],
+                    'StrictHFI': parameters['StrictHFI'],
                     'Simply': parameters['Simply'],
                     'Stats': True
                 }, context=context, feedback=feedback)
@@ -225,7 +236,8 @@ class BottomUpAlgorithm(QgsProcessingAlgorithm):
                 'OutputDirectory': parameters['OutputDirectory'],
                 'OnlySelected': False, 
                 'Single': parameters['Single'],
-                'Strict': parameters['Strict'],
+                'StrictHDI': parameters['StrictHDI'],
+                'StrictHFI': parameters['StrictHFI'],
                 'Simply': parameters['Simply'],
                 'Stats': True
             }, context=context, feedback=feedback)

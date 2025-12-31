@@ -62,9 +62,12 @@ class PolygonGrouper(QgsProcessingAlgorithm):
         single = QgsProcessingParameterBoolean('Single', "Use single holding's holders polygons", defaultValue=False)
         single.setFlags(single.flags() | QgsProcessingParameterDefinition.FlagAdvanced)
         self.addParameter(single)
-        strict = QgsProcessingParameterBoolean('Strict', "Strict conditions for neighbours method", defaultValue=False)
+        strict = QgsProcessingParameterBoolean('StrictHDI', "Strict condition on Holding Distance Indicator (HDI)", defaultValue=False)
         strict.setFlags(strict.flags() | QgsProcessingParameterDefinition.FlagAdvanced)
         self.addParameter(strict)
+        strict2 = QgsProcessingParameterBoolean('StrictHFI', "Strict condition on Holding Fragmentation Indicator (HFI)", defaultValue=False)
+        strict2.setFlags(strict2.flags() | QgsProcessingParameterDefinition.FlagAdvanced)
+        self.addParameter(strict2)
         simplfy = QgsProcessingParameterBoolean('Simply', "Simply algorithm to process big dataset",
                                                 defaultValue=False)
         simplfy.setFlags(simplfy.flags() | QgsProcessingParameterDefinition.FlagAdvanced)
@@ -128,7 +131,8 @@ class PolygonGrouper(QgsProcessingAlgorithm):
         self.onlySelected = parameters['OnlySelected']
         self.algorithmIndex = parameters['SwapToGet']
         self.simply = parameters['Simply']
-        self.strict = parameters['Strict']
+        self.strictHDI = parameters['StrictHDI']
+        self.strictHFI = parameters['StrictHFI']
         self.stats = parameters['Stats']
         inputLayer = self.parameterAsVectorLayer(parameters, 'Inputlayer', context)
         #context.temporaryLayerStore().addMapLayer(inputLayer)
@@ -182,6 +186,9 @@ class PolygonGrouper(QgsProcessingAlgorithm):
         if parameters['Stats']:
             beforeData = vgle_utils.calculateStatData(self, layer, self.holderAttribute)
             self.interactionTable = vgle_utils.createInteractionOutput(self.holdersWithHoldings)
+            copiedLayer = vgle_layers.copyLayer(layer, f"{inputLayer.name()}_before_stats_{timeStamp}")
+            mergedBELayer = vgle_layers.createMergedFile(self, copiedLayer, None)
+            mergedBEData = vgle_utils.calculateStatData(self, mergedBELayer, self.holderAttribute)
 
         feedback.setCurrentStep(1)
         if feedback.isCanceled():
@@ -208,7 +215,7 @@ class PolygonGrouper(QgsProcessingAlgorithm):
             oneSeedBoolean = vgle_utils.checkSeedNumber(self.seeds, feedback)
             if oneSeedBoolean:
                 swapedLayer, totalAreas = vgle_methods.closer(self, layer, feedback, context=context)
-                swapedLayer, totalAreas = vgle_methods.neighbours(self, swapedLayer, feedback, totalAreas, context=contex)
+                swapedLayer, totalAreas = vgle_methods.neighbours(self, swapedLayer, feedback, totalAreas, context=context)
             else:
                 swapedLayer = False
         #elif self.algorithmIndex == 4:
@@ -254,7 +261,7 @@ class PolygonGrouper(QgsProcessingAlgorithm):
                 mergedData = vgle_utils.calculateStatData(self, mergedLayer, attributeName)
                 try:
                     vgle_utils.saveInteractionOutput2(self, swapedLayer, attributeName)
-                    vgle_utils.createIndicesStat(self, beforeData, afterData, mergedData)
+                    vgle_utils.createIndicesStat(self, beforeData, mergedBEData, afterData, mergedData)
                     vgle_utils.createExchangeLog(self, swapedLayer, attributeName)
                     vgle_utils.saveInteractionOutput(self)
                 except Exception as e:

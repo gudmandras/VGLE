@@ -157,9 +157,10 @@ def neighbours(self, layer, feedback, totalAreas=None, context=None):
                                     break
                             for neighbourCombination in neighbourHoldingsCombinations:                
                                 lenTurn += 1  
-                                combTurn += 1            
+                                combTurn += 1
+                                neighbourCombinationLenght = len(neighbourCombination)       
                                 temporaryHolderArea = vgle_utils.calculateCombinationArea(self, combination)                             
-                                if self.strict:
+                                if self.strictHDI:
                                     # Distance conditions
                                     if self.useSingle and not targetHolderSeed:
                                         holderMaxDistance = vgle_features.maxDistance(self, combination, seed, layer)
@@ -192,9 +193,9 @@ def neighbours(self, layer, feedback, totalAreas=None, context=None):
                                         difference = abs(newHolderTotalArea-holderTotalArea)
                                         if totalAreaDifference == -999:
                                             if thresholdHolder and thresholdNeighbour:
-                                                holderNewHoldignNum = self.holdersHoldingNumber[holder] - len(combination) + len(neighbourCombination) - 1
-                                                targetNewHoldingNum = self.holdersHoldingNumber[neighbourHolder] - len(neighbourCombination) + len(combination)
-                                                if self.strict:
+                                                if self.strictHFI:
+                                                    holderNewHoldignNum = self.holdersHoldingNumber[holder] - combinationLenght + neighbourCombinationLenght
+                                                    targetNewHoldingNum = self.holdersHoldingNumber[neighbourHolder] - neighbourCombinationLenght + combinationLenght
                                                     if holderNewHoldignNum > self.holdersHoldingNumber[holder] or targetNewHoldingNum > self.holdersHoldingNumber[neighbourHolder]:
                                                         continue
                                                 holderCombinationForChange = combination
@@ -204,9 +205,9 @@ def neighbours(self, layer, feedback, totalAreas=None, context=None):
                                                 totalAreaDifference = difference
                                         else:
                                             if thresholdHolder and thresholdNeighbour and difference < totalAreaDifference:
-                                                holderNewHoldignNum = self.holdersHoldingNumber[holder] - len(combination) + len(neighbourCombination) - 1
-                                                targetNewHoldingNum = self.holdersHoldingNumber[neighbourHolder] - len(neighbourCombination) + len(combination)
-                                                if self.strict:
+                                                if self.strictHFI:
+                                                    holderNewHoldignNum = self.holdersHoldingNumber[holder] - combinationLenght + neighbourCombinationLenght 
+                                                    targetNewHoldingNum = self.holdersHoldingNumber[neighbourHolder] - neighbourCombinationLenght + combinationLenght
                                                     if holderNewHoldignNum > self.holdersHoldingNumber[holder] or targetNewHoldingNum > self.holdersHoldingNumber[neighbourHolder]:
                                                         continue
                                                 holderCombinationForChange = combination
