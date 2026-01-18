@@ -565,14 +565,14 @@ def createIndicesStat(self, beforeData, mergedBeforeData, afterData, mergedData)
             feature['BE HDI'] = 0
         feature['AE # of parcels (HFI)'] = mergedData[holder]['ParcelNumber']
         feature['AE Total Area (ha) (PFI)'] = afterData[holder]['TotalArea']
-        feature['AE Distance (m) (HDI)'] = afterData[holder]['AverageDistance']
+        feature['AE Distance (m) (HDI)'] = mergedData[holder]['AverageDistance']
         feature['Dif # of parcels (HFI)'] = mergedData[holder]['ParcelNumber'] - beforeData[holder]['ParcelNumber']
         feature['Dif Total Area (ha) (PFI)'] = afterData[holder]['TotalArea'] - beforeData[holder]['TotalArea']
         feature['Dif Distance (m) (HDI)'] = mergedData[holder]['AverageDistance'] - beforeData[holder]['AverageDistance']
         feature['AE HFI'] = (1 - (mergedData[holder]['ParcelNumber'] / beforeData[holder]['ParcelNumber'])) * 100
         feature['AE PFI'] = round(afterData[holder]['TotalArea']/mergedData[holder]['ParcelNumber'], 3)
         try:
-            feature['AE HDI'] = (1 - (afterData[holder]['AverageDistance'] /
+            feature['AE HDI'] = (1 - (mergedData[holder]['AverageDistance'] /
                                        beforeData[holder]['AverageDistance'])) * 100
         except ZeroDivisionError:
             feature['AE HDI'] = 0
