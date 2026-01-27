@@ -255,8 +255,6 @@ def createDistanceMatrix(self, layer, nearestPoints=0, simply=False):
                     tempDict[field] = value
             distanceMatrix[feature.attribute('ID')] = tempDict
 
-    #with open(r'd:\Job\GOPA\2_term\GIS_data\distance_matrix\qgis_matrix.json', 'w') as f:
-    #    json.dump(distanceMatrix, f, indent=4)
     return distanceMatrix
 
 def filterDistanceMatrix(distance, distanceMatrix):
@@ -1045,3 +1043,63 @@ def multi_distance_matrix(self, layer, outputDirectory):
             distanceMatrix.update(partial_result)
 
     return distanceMatrix
+
+def createFragmentationStat(self, data, mergedBeforeData):
+    """
+    DESCRIPTION: Create statistics about the plugin run. Three statistics generate
+    INPUTS:
+            layer: QgsVectorLayer
+    OUTPUTS: QgsVectorLayer
+    """
+    indicators = QgsVectorLayer("NoGeometry?", "Indicators", "memory")
+    indicators_data = indicators.dataProvider()
+    indicators_data.addAttributes([QgsField('Number', QVariant.Int)])
+    if 6 > self.holderAttributeType >= 2:
+        indicators_data.addAttributes([QgsField('Holder ID', QVariant.Int)])
+    elif self.holderAttributeType == 6:
+        indicators_data.addAttributes([QgsField('Holder ID', QVariant.Double, "float", 10, 3)])
+    elif self.holderAttributeType == 10:
+        indicators_data.addAttributes([QgsField('Holder ID', QVariant.String, len=self.holderAttributeLenght)])
+    else:
+        indicators_data.addAttributes([QgsField('Holder ID', QVariant.Int)])
+    indicators_data.addAttributes([QgsField('# of parcels (HFI)', QVariant.Int)])
+    indicators_data.addAttributes([QgsField('Total Area (PFI)', QVariant.Double, "float", 10, 3)])
+    indicators_data.addAttributes([QgsField('Distance (m) (HDI)', QVariant.Double, "float", 10, 3)])
+    indicators_data.addAttributes([QgsField('HFI', QVariant.Double, "float", 10, 3)])
+    indicators_data.addAttributes([QgsField('PFI', QVariant.Double, "float", 10, 3)])
+    indicators_data.addAttributes([QgsField('HDI', QVariant.Double, "float", 10, 3)])
+    indicators.updateFields()
+
+    fields = indicators.fields()
+    feats = []
+    holders = list(self.holdersWithHoldings.keys())
+    for turn, holder in enumerate(holders):
+        feature = QgsFeature()
+        # inform the feature of its fields
+        feature.setFields(fields)
+        feature['Number'] = turn
+        feature['Holder ID'] = holder
+        feature['# of parcels (HFI)'] = data[holder]['ParcelNumber']
+        feature['Total Area (PFI)'] = data[holder]['TotalArea']
+        feature['Distance (m) (HDI)'] = data[holder]['AverageDistance']
+        feature['HFI'] = (1 - (mergedBeforeData[holder]['ParcelNumber'] / data[holder]['ParcelNumber'])) * 100
+        feature['PFI'] = round(data[holder]['TotalArea']/data[holder]['ParcelNumber'], 3)
+        try:
+            feature['HDI'] = (1 - (mergedBeforeData[holder]['AverageDistance'] /
+                                       data[holder]['AverageDistance'])) * 100
+        except ZeroDivisionError:
+            feature['HDI'] = 0
+        feats.append(feature)
+
+    indicators_data.addFeatures(feats)
+    indicators.commitChanges()
+    QgsProject.instance().addMapLayer(indicators, False)
+    root = QgsProject().instance().layerTreeRoot()
+    root.insertLayer(0, indicators)
+
+    settingPath = os.path.join(QgsApplication.qgisSettingsDirPath(), 'styles', 'indicator_style.qml')
+    if os.path.isfile(settingPath):
+        indicators.loadNamedStyle(settingPath)
+        indicators.triggerRepaint()
+    
+    return indicators_data

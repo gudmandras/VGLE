@@ -281,6 +281,9 @@ class PolygonGrouper(QgsProcessingAlgorithm):
             results['MERGED'] = mergedLayer
             return results
         else:
-            feedback.pushInfo('No change was made!') 
+            if self.strictHDI or self.strictHFI:
+                feedback.pushInfo('No change was made, probably due to the too strict conditions (HDI or HFI)! Try to disable these parameters and run again.') 
+            else:
+                feedback.pushInfo('No change was made! Try to modify the parameters and run again.') 
             vgle_utils.endLogging()   
             return {}
