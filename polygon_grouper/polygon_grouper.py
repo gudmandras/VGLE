@@ -74,7 +74,7 @@ class vgle(object):
         :type iface: QgsInterface
         """
         self.provider = None
-        enable_remote_debugging()
+        #enable_remote_debugging()
         # Save reference to the QGIS interface
         self.iface = iface
         # initialize plugin directory
@@ -138,7 +138,7 @@ class vgle(object):
         # Only create GUI ONCE in callback, so that it will only load when the plugin is started
         if self.first_start == True:
             self.first_start = False
-        import ptvsd
-        ptvsd.debug_this_thread()
+        #import ptvsd
+        #ptvsd.debug_this_thread()
         processing.execAlgorithmDialog("Polygon Grouper:polygon_grouper")
 
