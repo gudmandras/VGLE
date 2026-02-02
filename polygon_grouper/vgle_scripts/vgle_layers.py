@@ -438,7 +438,7 @@ def cleanMergedLayer(self, toDeletAttr, layer):
     layer.startEditing()
     indexes = []
     lastHolderAttribute = int(self.actualHolderAttribute.split('_')[0])
-    if lastHolderAttribute == self.steps-2:
+    if lastHolderAttribute == self.steps-3:
         if self.steps-2 >= 10:
             holderAttribute = str(lastHolderAttribute) + self.actualHolderAttribute[2:]
         else:

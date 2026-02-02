@@ -135,6 +135,7 @@ class PolygonGrouper(QgsProcessingAlgorithm):
         self.strictHFI = parameters['StrictHFI']
         self.stats = parameters['Stats']
         inputLayer = self.parameterAsVectorLayer(parameters, 'Inputlayer', context)
+        self.inputLayer = inputLayer
         #context.temporaryLayerStore().addMapLayer(inputLayer)
         if parameters['OutputDirectory'] == 'TEMPORARY_OUTPUT':
             parameters['OutputDirectory'] = tempfile.mkdtemp()
@@ -247,7 +248,7 @@ class PolygonGrouper(QgsProcessingAlgorithm):
 
             if parameters['Stats']:
                 lastHolderAttribute = int(self.actualHolderAttribute.split('_')[0])
-                if lastHolderAttribute == self.steps-2:
+                if lastHolderAttribute == self.steps-3:
                     if self.steps-2 >= 10:
                         attributeName = str(lastHolderAttribute) + self.actualHolderAttribute[2:]
                     else:

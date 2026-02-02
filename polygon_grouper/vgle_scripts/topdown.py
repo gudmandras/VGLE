@@ -116,6 +116,7 @@ class TopDownAlgorithm(QgsProcessingAlgorithm):
 
         timeStamp = datetime.fromtimestamp(time.time()).strftime("%d_%m_%Y_%H_%M_%S")
         inputLayer = self.parameterAsVectorLayer(parameters, 'Inputlayer', context)
+        self.inputLayer = inputLayer
         if parameters['OutputDirectory'] == 'TEMPORARY_OUTPUT':
             parameters['OutputDirectory'] = tempfile.mkdtemp()
         tempLayer = vgle_layers.createTempLayer(inputLayer, parameters["OutputDirectory"],
