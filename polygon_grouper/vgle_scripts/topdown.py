@@ -95,8 +95,6 @@ class TopDownAlgorithm(QgsProcessingAlgorithm):
             return f"<html><body><p>Error reading description file: {e}</p></body></html>"
 
     def processAlgorithm(self, parameters, context, feedback):
-        #import ptvsd
-        #ptvsd.debug_this_thread()
         results = {}
 
         if not is_r_provider_installed():

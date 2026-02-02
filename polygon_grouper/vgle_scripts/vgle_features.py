@@ -247,8 +247,6 @@ def filterTouchingFeatures(self, layer, toSeed=False):
 
 
 def checkShape(self, layer, seed, holdings, holderCombination, sortedCombination):
-    # import ptvsd
-    # ptvsd.debug_this_thread()
     algParams = {
         'INPUT': layer,
         'FIELD': [self.actualHolderAttribute],

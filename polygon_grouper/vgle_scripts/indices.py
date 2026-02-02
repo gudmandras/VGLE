@@ -56,8 +56,6 @@ class StatAlgorithm(QgsProcessingAlgorithm):
         return self.tr("Calculates fragmentation indices for the input polygon layer.")
 
     def processAlgorithm(self, parameters, context, feedback):
-        #import ptvsd
-        #ptvsd.debug_this_thread()
         timeStamp = datetime.fromtimestamp(time.time()).strftime("%d_%m_%Y_%H_%M_%S")
         results = {}
         inputLayer = self.parameterAsVectorLayer(parameters, 'Inputlayer', context) 

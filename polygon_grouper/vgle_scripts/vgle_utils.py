@@ -174,8 +174,6 @@ def createDistanceMatrix(self, layer, nearestPoints=0, simply=False):
     #INPUTS:
     #        layer: QgsVectorLayer
     #OUTPUTS: Dictionary, key: holding id, values: Distionary (nested), key: holding ids, values: Float, distances
-    #import ptvsd
-    #ptvsd.debug_this_thread()
     algParams = {
         'INPUT': layer,
         'ALL_PARTS': False,
@@ -335,8 +333,6 @@ def calculateStatData(self, layer, fieldName):
             fieldName: name of the field
     OUTPUTS: Dictionary - Holder - # of holdings - Area - Average distance
     """
-    # import ptvsd
-    # ptvsd.debug_this_thread()
     statData = {}
     holdersWithHoldings, holdersHoldingNumber = vgle_features.getHoldersHoldings(layer, fieldName, self.idAttribute)
     for holder, holdings in holdersWithHoldings.items():
@@ -891,8 +887,6 @@ def saveInteractionOutput2(self, layer, actualHoldingId):
     root.insertLayer(0, log)  
 
 def saveInteractionOutputGOPA(self, path, layer, actualHoldingId):
-    # import ptvsd
-    # ptvsd.debug_this_thread()
     # Wrong method, but they use this
     beforeHoldersWithHoldings, beforeholdersHoldingNumber = vgle_features.getHoldersHoldings(layer,
                                                                                              self.holderAttribute,

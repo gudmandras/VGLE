@@ -20,8 +20,6 @@ def neighbours(self, layer, feedback, totalAreas=None, context=None):
             feedback: QgsProcessingMultiStepFeedback
     OUTPUTS: QgsVectorLayer
     """
-    #import ptvsd
-    #ptvsd.debug_this_thread()
     changes = 0
     changer = True
     self.globalChangables = vgle_utils.getChangableHoldings(self)
@@ -250,6 +248,13 @@ def neighbours(self, layer, feedback, totalAreas=None, context=None):
                 layer.deleteAttributes(indexes)
                 layer.updateFields()
                 layer.commitChanges()
+                lastHolderAttribute = int(self.actualHolderAttribute.split('_')[0])
+                if lastHolderAttribute >= 10:
+                    self.actualIdAttribute = str(lastHolderAttribute-1) + self.actualIdAttribute[2:]
+                    self.actualHolderAttribute = str(lastHolderAttribute-1) + self.actualHolderAttribute[2:]
+                else:
+                    self.actualIdAttribute = str(lastHolderAttribute-1) + self.actualIdAttribute[1:]
+                    self.actualHolderAttribute = str(lastHolderAttribute-1) + self.actualHolderAttribute[1:]
                 return layer, holdersLocalTotalArea
             elif (self.algorithmIndex == 0 or self.algorithmIndex == 3) and (turn == self.steps-3):
                 changer = False
@@ -273,8 +278,6 @@ def neighbours_multi(self, layer, feedback, totalAreas=None):
             feedback: QgsProcessingMultiStepFeedback
     OUTPUTS: QgsVectorLayer
     """
-    #import ptvsd
-    #ptvsd.debug_this_thread()
     maxCombTurn = 2000
     TIMEOUT_SECONDS = 20
     MAX_PARALLEL = os.cpu_count() - 2
@@ -550,8 +553,6 @@ def closer(self, layer, feedback, seeds=None, totalAreas=None, context=None):
             seeds: List, holding ids
     OUTPUTS: QgsVectorLayer
     """
-    #import ptvsd
-    #ptvsd.debug_this_thread()
     maxCombTurn = 2000
     changes = 1
     changer = True
@@ -757,6 +758,13 @@ def closer(self, layer, feedback, seeds=None, totalAreas=None, context=None):
                     layer.deleteAttributes(indexes)
                     layer.updateFields()
                     layer.commitChanges()
+                    lastHolderAttribute = int(self.actualHolderAttribute.split('_')[0])
+                    if lastHolderAttribute >= 10:
+                        self.actualIdAttribute = str(lastHolderAttribute-1) + self.actualIdAttribute[2:]
+                        self.actualHolderAttribute = str(lastHolderAttribute-1) + self.actualHolderAttribute[2:]
+                    else:
+                        self.actualIdAttribute = str(lastHolderAttribute-1) + self.actualIdAttribute[1:]
+                        self.actualHolderAttribute = str(lastHolderAttribute-1) + self.actualHolderAttribute[1:]
             elif (self.algorithmIndex == 1 or self.algorithmIndex == 2) and (turn == self.steps-3):
                 vgle_features.filterTouchingFeatures(self, layer)
                 changer = False
@@ -781,8 +789,6 @@ def closer_multi(self, layer, feedback, seeds=None, totalAreas=None):
             seeds: List, holding ids
     OUTPUTS: QgsVectorLayer
     """
-    #import ptvsd
-    #ptvsd.debug_this_thread()
     maxCombTurn = 2000
     TIMEOUT_SECONDS = 60
     MAX_PARALLEL = os.cpu_count() - 2
@@ -1044,8 +1050,6 @@ def hybrid_method(self, layer, feedback):
             seeds: List, holding ids
     OUTPUTS: QgsVectorLayer
     """
-    # import ptvsd
-    # ptvsd.debug_this_thread()
     MAX_TURN = 200000
     changes = 1
     turn = 0

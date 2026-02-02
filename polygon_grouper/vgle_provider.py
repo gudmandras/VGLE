@@ -31,8 +31,6 @@ class PolygonGrouperProvider(QgsProcessingProvider):
         """
         Loads all algorithms belonging to this provider.
         """
-        #import ptvsd
-        #ptvsd.debug_this_thread()
         self.addAlgorithm(PolygonGrouper())
         self.addAlgorithm(BottomUpAlgorithm())
         self.addAlgorithm(TopDownAlgorithm())

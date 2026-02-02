@@ -372,16 +372,10 @@ def createMergedFile(self, layer, directory):
     """
     try:
         lastHolderAttribute = int(self.actualHolderAttribute.split('_')[0])
-        if lastHolderAttribute == self.steps-2:
-            if self.steps-2 >= 10:
-                attributeName = str(lastHolderAttribute) + self.actualHolderAttribute[2:]
-            else:
-                attributeName = str(lastHolderAttribute) + self.actualHolderAttribute[1:]
+        if lastHolderAttribute >= 10:
+            attributeName = str(lastHolderAttribute) + self.actualHolderAttribute[2:]
         else:
-            if lastHolderAttribute >= 10:
-                attributeName = str(lastHolderAttribute-1) + self.actualHolderAttribute[2:]
-            else:
-                attributeName = str(lastHolderAttribute-1) + self.actualHolderAttribute[1:]
+            attributeName = str(lastHolderAttribute) + self.actualHolderAttribute[1:]
     except AttributeError:
         attributeName = self.holderAttribute
 
@@ -438,16 +432,10 @@ def cleanMergedLayer(self, toDeletAttr, layer):
     layer.startEditing()
     indexes = []
     lastHolderAttribute = int(self.actualHolderAttribute.split('_')[0])
-    if lastHolderAttribute == self.steps-3:
-        if self.steps-2 >= 10:
-            holderAttribute = str(lastHolderAttribute) + self.actualHolderAttribute[2:]
-        else:
-            holderAttribute = str(lastHolderAttribute) + self.actualHolderAttribute[1:]
+    if lastHolderAttribute >= 10:
+        holderAttribute = str(lastHolderAttribute) + self.actualHolderAttribute[2:]
     else:
-        if lastHolderAttribute >= 10:
-            holderAttribute = str(lastHolderAttribute-1) + self.actualHolderAttribute[2:]
-        else:
-            holderAttribute = str(lastHolderAttribute-1) + self.actualHolderAttribute[1:]
+        holderAttribute = str(lastHolderAttribute) + self.actualHolderAttribute[1:]
     for attributeName in toDeletAttr:
         if attributeName not in [self.idAttribute, holderAttribute]:
             indexes.append(layer.fields().indexFromName(attributeName))
@@ -467,14 +455,8 @@ def copyStyle(self, templateLayer, targetLayer):
     renderer = targetLayer.renderer()
     if hasattr(renderer, 'setClassAttribute'):
         lastHolderAttribute = int(self.actualHolderAttribute.split('_')[0])
-        
-        if lastHolderAttribute == self.steps - 2:
-            offset = 2 if lastHolderAttribute >= 10 else 1
-            holderAttribute = str(lastHolderAttribute) + self.actualHolderAttribute[offset:]
-        else:
-            offset = 2 if lastHolderAttribute >= 10 else 1
-            holderAttribute = str(lastHolderAttribute - 1) + self.actualHolderAttribute[offset:]
-            
+        offset = 2 if lastHolderAttribute >= 10 else 1
+        holderAttribute = str(lastHolderAttribute) + self.actualHolderAttribute[offset:]
         renderer.setClassAttribute(holderAttribute)
     
     targetLayer.triggerRepaint()

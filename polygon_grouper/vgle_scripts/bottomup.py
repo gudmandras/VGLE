@@ -93,8 +93,6 @@ class BottomUpAlgorithm(QgsProcessingAlgorithm):
             return f"<html><body><p>Error reading description file: {e}</p></body></html>"
 
     def processAlgorithm(self, parameters, context, feedback):
-        #import ptvsd
-        #ptvsd.debug_this_thread()
         results = {}
         timeStamp = datetime.fromtimestamp(time.time()).strftime("%d_%m_%Y_%H_%M_%S")
         inputLayer = self.parameterAsVectorLayer(parameters, 'Inputlayer', context)

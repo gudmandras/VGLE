@@ -248,16 +248,10 @@ class PolygonGrouper(QgsProcessingAlgorithm):
 
             if parameters['Stats']:
                 lastHolderAttribute = int(self.actualHolderAttribute.split('_')[0])
-                if lastHolderAttribute == self.steps-3:
-                    if self.steps-2 >= 10:
-                        attributeName = str(lastHolderAttribute) + self.actualHolderAttribute[2:]
-                    else:
-                        attributeName = str(lastHolderAttribute) + self.actualHolderAttribute[1:]
+                if lastHolderAttribute >= 10:
+                    attributeName = str(lastHolderAttribute) + self.actualHolderAttribute[2:]
                 else:
-                    if lastHolderAttribute >= 10:
-                        attributeName = str(lastHolderAttribute-1) + self.actualHolderAttribute[2:]
-                    else:
-                        attributeName = str(lastHolderAttribute-1) + self.actualHolderAttribute[1:]
+                    attributeName = str(lastHolderAttribute) + self.actualHolderAttribute[1:]
                 afterData = vgle_utils.calculateStatData(self, swapedLayer, attributeName)
                 mergedData = vgle_utils.calculateStatData(self, mergedLayer, attributeName)
                 try:
