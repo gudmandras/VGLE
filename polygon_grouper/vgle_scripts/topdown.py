@@ -307,13 +307,20 @@ def copyR_script(r_script_path):
         try:
             if not os.path.isfile(dest_path): 
                 shutil.copy(r_script_path, dest_path)
+            else:
+                os.remove(dest_path)
+                shutil.copy(r_script_path, dest_path)
         except Exception as e:
             return False
     else:
         try:
             settings_dir = QgsApplication.qgisSettingsDirPath()
             rsx_cache_path = os.path.join(settings_dir, "processing", "rscripts", os.path.basename(r_script_path))
-            shutil.copy(r_script_path, rsx_cache_path)
+            if not os.path.isfile(rsx_cache_path): 
+                shutil.copy(r_script_path, rsx_cache_path)
+            else:
+                os.remove(rsx_cache_path)
+                shutil.copy(r_script_path, rsx_cache_path)
         except Exception as e:
             return False   
     return True
@@ -343,4 +350,5 @@ def rename_file(layer, new_name):
         os.path.join(folder, new_base + ".shp"),
         new_base,
         "ogr"
+
     )
