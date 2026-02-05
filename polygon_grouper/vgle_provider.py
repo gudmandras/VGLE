@@ -8,6 +8,7 @@ from qgis.core import QgsProcessingProvider
 from .vgle_agorithm import PolygonGrouper
 from .vgle_scripts.bottomup import BottomUpAlgorithm
 from .vgle_scripts.topdown import TopDownAlgorithm
+from .vgle_scripts.just_topdown import JustTopDownAlgorithm
 from .vgle_scripts.indices import StatAlgorithm
 from qgis.PyQt.QtGui import QIcon
 import os, inspect
@@ -34,6 +35,7 @@ class PolygonGrouperProvider(QgsProcessingProvider):
         self.addAlgorithm(PolygonGrouper())
         self.addAlgorithm(BottomUpAlgorithm())
         self.addAlgorithm(TopDownAlgorithm())
+        self.addAlgorithm(JustTopDownAlgorithm())
         self.addAlgorithm(StatAlgorithm())
 
     def id(self):
