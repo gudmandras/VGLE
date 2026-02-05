@@ -118,11 +118,13 @@ class JustTopDownAlgorithm(QgsProcessingAlgorithm):
 
         timeStamp = datetime.fromtimestamp(time.time()).strftime("%d_%m_%Y_%H_%M_%S")
         inputLayer = self.parameterAsVectorLayer(parameters, 'Inputlayer', context)
+        context.temporaryLayerStore().addMapLayer(inputLayer)
         self.permanent_data['inputLayer'] = inputLayer
         if parameters['OutputDirectory'] == 'TEMPORARY_OUTPUT':
             parameters['OutputDirectory'] = tempfile.mkdtemp()
         tempLayer = vgle_layers.createTempLayer(self.permanent_data['inputLayer'], parameters["OutputDirectory"],
                                                 'topdown', timeStamp)
+        context.temporaryLayerStore().addMapLayer(tempLayer)
         self.permanent_data['tempLayer'] = tempLayer 
         layer, self.holderAttribute = vgle_layers.setHolderField(self.permanent_data['tempLayer'], parameters["AssignedByField"])
         context.temporaryLayerStore().addMapLayer(layer)
@@ -201,34 +203,13 @@ class JustTopDownAlgorithm(QgsProcessingAlgorithm):
         return results
 
     def selectGroup(self, group, layer, idAttribute, context):
-        values = []
-        fieldType = layer.fields().field(idAttribute).type()
+        quoted_values = [QgsExpression.quotedValue(v) for v in group]
+        expression = f'"{idAttribute}" IN ({",".join(map(str, quoted_values))})'
+        request = QgsFeatureRequest().setFilterExpression(expression)
 
-        for value in group:
-            if fieldType in (QVariant.Int, QVariant.LongLong):
-                values.append(str(value))
-            else:
-                values.append(QgsExpression.quotedString(str(value)))
-        expression = f'"{idAttribute}" IN ({",".join(values)})'
-
-        layer.selectByExpression(expression)
-        layer.triggerRepaint()
-        QgsApplication.processEvents()
-
-        algParams = {
-            'INPUT': layer,
-            'OUTPUT': 'TEMPORARY_OUTPUT'
-        }
-        selectedFeatures = processing.run('native:saveselectedfeatures', algParams,  context=context)["OUTPUT"]
-        sF_id = selectedFeatures.id()
-        print(type(selectedFeatures))
-
-        if isinstance(selectedFeatures, QgsVectorLayer):
-            context.temporaryLayerStore().addMapLayer(selectedFeatures)
-        loop = QEventLoop()
-        QTimer.singleShot(2000, loop.quit)
-        loop.exec_()
-        return selectedFeatures, sF_id
+        selectedFeatures = layer.materialize(request)
+        selectedFeatures.setName(f"temp_group_{random.randint(1000,9999)}")
+        self.permanent_data['groupLayer'] = selectedFeatures
 
 def is_r_provider_installed():
     registry = QgsApplication.processingRegistry()
@@ -238,7 +219,16 @@ def is_r_provider_installed():
     else:
         return enable_r_plugin()
 
-def enable_r_plugin():
+def enable_r_plugin(reload=False):
+    if reload:
+        try:
+            qgis.utils.unloadPlugin("processing_r")
+            qgis.utils.loadPlugin("processing_r")
+            qgis.utils.startPlugin("processing_r")
+            return True
+        except Exception as e:  
+            return False
+
     try:
         if "processing_r" not in qgis.utils.plugins:
             qgis.utils.loadPlugin("processing_r")
@@ -272,6 +262,8 @@ def copyR_script(r_script_path):
             else:
                 os.remove(dest_path)
                 shutil.copy(r_script_path, dest_path)
+            if not enable_r_plugin(reload=True):
+                raise Exception("Failed to enable R plugin after copying RSX script.")
         except Exception as e:
             return False
     else:
@@ -283,6 +275,8 @@ def copyR_script(r_script_path):
             else:
                 os.remove(rsx_cache_path)
                 shutil.copy(r_script_path, rsx_cache_path)
+            if not enable_r_plugin(reload=True):
+                raise Exception("Failed to enable R plugin after copying RSX script.")
         except Exception as e:
             return False   
     return True

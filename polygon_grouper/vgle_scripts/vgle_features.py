@@ -39,11 +39,9 @@ def getSelectedFeatures(inputLayer):
             inputLayer: QgsVectorLayer
     OUTPUTS: QgsVectorLayer
     """
-    algParams = {
-        'INPUT': inputLayer,
-        'OUTPUT': 'TEMPORARY_OUTPUT'
-    }
-    selectedFeatures = processing.run("native:saveselectedfeatures", algParams)["OUTPUT"]
+    selection = inputLayer.selectedFeatureIds()
+    request = QgsFeatureRequest().setFilterFids(selection)
+    selectedFeatures = inputLayer.materialize(request)
     return selectedFeatures
 
 

@@ -1,4 +1,4 @@
-import random, tempfile, time, os, shutil
+import random, tempfile, time, os, shutil, gc
 from datetime import datetime
 
 from qgis.PyQt.QtCore import QCoreApplication, QVariant, QEventLoop, QTimer
@@ -234,8 +234,9 @@ class TopDownAlgorithm(QgsProcessingAlgorithm):
                 root = QgsProject().instance().layerTreeRoot()
                 root.insertLayer(0, groupedLayer)
                 results['OUTPUT'].append(groupedLayer)
+            del self.permanent_data['groupLayer'], tempResult
+            gc.collect()
             QgsApplication.processEvents()
-            #del groupLayer
         return results
 
     def selectGroup(self, group, layer, idAttribute, context):
@@ -256,7 +257,16 @@ def is_r_provider_installed():
     else:
         return enable_r_plugin()
 
-def enable_r_plugin():
+def enable_r_plugin(reload=False):
+    if reload:
+        try:
+            qgis.utils.unloadPlugin("processing_r")
+            qgis.utils.loadPlugin("processing_r")
+            qgis.utils.startPlugin("processing_r")
+            return True
+        except Exception as e:  
+            return False
+
     try:
         if "processing_r" not in qgis.utils.plugins:
             qgis.utils.loadPlugin("processing_r")
@@ -290,6 +300,8 @@ def copyR_script(r_script_path):
             else:
                 os.remove(dest_path)
                 shutil.copy(r_script_path, dest_path)
+            if not enable_r_plugin(reload=True):
+                raise Exception("Failed to enable R plugin after copying RSX script.")
         except Exception as e:
             return False
     else:
@@ -301,6 +313,8 @@ def copyR_script(r_script_path):
             else:
                 os.remove(rsx_cache_path)
                 shutil.copy(r_script_path, rsx_cache_path)
+            if not enable_r_plugin(reload=True):
+                raise Exception("Failed to enable R plugin after copying RSX script.")
         except Exception as e:
             return False   
     return True

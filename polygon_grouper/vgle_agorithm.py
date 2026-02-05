@@ -136,8 +136,8 @@ class PolygonGrouper(QgsProcessingAlgorithm):
         self.strictHFI = parameters['StrictHFI']
         self.stats = parameters['Stats']
         inputLayer = self.parameterAsVectorLayer(parameters, 'Inputlayer', context)
+        context.temporaryLayerStore().addMapLayer(inputLayer)
         self.permanent_data['inputLayer'] = inputLayer
-        #context.temporaryLayerStore().addMapLayer(inputLayer)
         if parameters['OutputDirectory'] == 'TEMPORARY_OUTPUT':
             parameters['OutputDirectory'] = tempfile.mkdtemp()
        
@@ -145,10 +145,11 @@ class PolygonGrouper(QgsProcessingAlgorithm):
         # Create work file and get the starting dictionaries
         tempLayer = vgle_layers.createTempLayer(self.permanent_data['inputLayer'], parameters["OutputDirectory"],
                                                 self.algorithmNames[self.algorithmIndex].lower(), timeStamp)
+        context.temporaryLayerStore().addMapLayer(tempLayer)
         self.permanent_data['tempLayer'] = tempLayer                          
         layer, self.holderAttribute = vgle_layers.setHolderField(self.permanent_data['tempLayer'], parameters["AssignedByField"])
         self.permanent_data['layer'] = layer
-        context.temporaryLayerStore().addMapLayer(self.permanent_data['layer'])
+        context.temporaryLayerStore().addMapLayer(layer)
         self.holderAttributeType, self.holderAttributeLenght = \
             vgle_features.getFieldProperties(self.permanent_data['tempLayer'], self.holderAttribute)
         holdersWithHoldings, holdersHoldingNumber = vgle_features.getHoldersHoldings(self.permanent_data['layer'], self.holderAttribute)
