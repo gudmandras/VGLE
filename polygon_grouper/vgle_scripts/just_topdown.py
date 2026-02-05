@@ -1,6 +1,6 @@
 import random, tempfile, time, os, shutil
 from datetime import datetime
-
+from pathlib import Path
 from qgis.PyQt.QtCore import QCoreApplication, QVariant, QEventLoop, QTimer
 from processing.core.Processing import Processing
 from qgis.core import (QgsProject,
@@ -127,7 +127,7 @@ class JustTopDownAlgorithm(QgsProcessingAlgorithm):
 
         feedback.pushInfo('Group creation started')
         groupsCSV = self.parameterAsFile(parameters, 'csvPath', context)
-        parts = str(groupsCSV).split('_')
+        parts = str(Path(groupsCSV).stem).split('_')
         ddate = "_".join(parts[2:])
 
         feedback.pushInfo('Group CSV created at: ' + groupsCSV)
