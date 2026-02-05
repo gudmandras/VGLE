@@ -125,7 +125,7 @@ def determineSeedPolygons(layer, self, preference=False, selectedFeatures=None):
             'INTERSECT': selectedFeatures,
             'OUTPUT': 'TEMPORARY_OUTPUT'
         }
-        processing.run("native:selectbylocation", algParams)
+        processing.run("native:selectbylocation", algParams, is_child_algorithm=True)
         selectedFeatures = layer.selectedFeatures()
         for feature in selectedFeatures:
             holderValue = feature.attribute(self.holderAttribute)

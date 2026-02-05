@@ -384,7 +384,7 @@ def createMergedFile(self, layer, directory):
         'INPUT': layer,
         'METHOD': 0
     }
-    processing.run('qgis:selectbyexpression', algParams)
+    processing.run('qgis:selectbyexpression', algParams, is_child_algorithm=True)
 
     # Extract selected features
     algParams = {

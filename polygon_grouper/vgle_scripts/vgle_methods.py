@@ -67,7 +67,7 @@ def neighbours(self, layer, feedback, totalAreas=None, context=None):
                 continue
 
             for seed in seeds:
-                neighboursIds, neighboursLayer = vgle_features.getNeighbours(self.idAttribute, layer, seed, context=context, feedback=feedback)
+                neighboursIds, neighboursFeatures = vgle_features.getNeighbours(self.idAttribute, layer, seed, context=context, feedback=feedback)
                 inDistance = self.filteredDistanceMatrix[seed]
                 distanceChanges = vgle_utils.getChangableHoldings(self, inDistance)
                 localChangables = [distance for distance in distanceChanges
@@ -85,7 +85,6 @@ def neighbours(self, layer, feedback, totalAreas=None, context=None):
                     else:
                         holdingsIds.append(holdingId)
 
-                neighboursFeatures = neighboursLayer.getFeatures()
                 for nghfeat in neighboursFeatures:
                     # Get holder total area
                     holderTotalArea = holdersLocalTotalArea[holder]

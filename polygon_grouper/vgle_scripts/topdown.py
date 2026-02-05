@@ -10,6 +10,8 @@ from qgis.core import (QgsProject,
                        QgsApplication,
                        QgsVectorLayer,
                        QgsProcessingAlgorithm,
+                       QgsFeatureRequest,
+                       QgsProcessingUtils,
                        QgsProcessingMultiStepFeedback,
                        QgsProcessingParameterBoolean,
                        QgsProcessingParameterVectorLayer,
@@ -65,6 +67,7 @@ class TopDownAlgorithm(QgsProcessingAlgorithm):
                                                 defaultValue=False)
         simplfy.setFlags(simplfy.flags() | QgsProcessingParameterDefinition.FlagAdvanced)
         self.addParameter(simplfy)
+        self.permanent_data = {}
 
     def tr(self, string):
         return QCoreApplication.translate('Processing', string)
@@ -114,15 +117,17 @@ class TopDownAlgorithm(QgsProcessingAlgorithm):
 
         timeStamp = datetime.fromtimestamp(time.time()).strftime("%d_%m_%Y_%H_%M_%S")
         inputLayer = self.parameterAsVectorLayer(parameters, 'Inputlayer', context)
-        self.inputLayer = inputLayer
+        self.permanent_data['inputLayer'] = inputLayer
         if parameters['OutputDirectory'] == 'TEMPORARY_OUTPUT':
             parameters['OutputDirectory'] = tempfile.mkdtemp()
-        tempLayer = vgle_layers.createTempLayer(inputLayer, parameters["OutputDirectory"],
+        tempLayer = vgle_layers.createTempLayer(self.permanent_data['inputLayer'], parameters["OutputDirectory"],
                                                 'topdown', timeStamp)
-        layer, self.holderAttribute = vgle_layers.setHolderField(tempLayer, parameters["AssignedByField"])
+        self.permanent_data['tempLayer'] = tempLayer                                             
+        layer, self.holderAttribute = vgle_layers.setHolderField(self.permanent_data['tempLayer'], parameters["AssignedByField"])
+        self.permanent_data['layer'] = layer
         context.temporaryLayerStore().addMapLayer(layer)
         firstResult = processing.run("Polygon Grouper:polygon_grouper", {
-                'Inputlayer': layer,
+                'Inputlayer': self.permanent_data['layer'],
                 'Preference': False,
                 'AssignedByField': [self.holderAttribute],
                 'BalancedByField': parameters['BalancedByField'],
@@ -139,6 +144,8 @@ class TopDownAlgorithm(QgsProcessingAlgorithm):
             }, context=context, feedback=feedback)
         swappedLayer = firstResult['OUTPUT']
         mergedLayer = firstResult['MERGED']
+        self.permanent_data['swappedLayer'] = swappedLayer
+        self.permanent_data['mergedLayer'] = mergedLayer
         feedback.setProgress(50)
 
         feedback.pushInfo('Group creation started')
@@ -167,9 +174,6 @@ class TopDownAlgorithm(QgsProcessingAlgorithm):
             'Group': csv_sanitized
         }, context=context, feedback=feedback)
 
-        #modularity = result['MODULARITY']
-        #feedback.pushInfo(f"Modularity Score: {modularity}")
-
         groupsCSV = result['Group']
         feedback.pushInfo('Group CSV created at: ' + groupsCSV)
         uri = f"file:{groupsCSV}?type=csv&geomType=none"
@@ -182,7 +186,7 @@ class TopDownAlgorithm(QgsProcessingAlgorithm):
             groups.setdefault(group_id, []).append(holder_id)
             assigned_holders.add(holder_id)
         none_group = max(groups.keys())
-        none_group_members = [f[self.holderAttribute] for f in layer.getFeatures() if f[self.holderAttribute] not in assigned_holders]
+        none_group_members = [f[self.holderAttribute] for f in self.permanent_data['layer'].getFeatures() if f[self.holderAttribute] not in assigned_holders]
         
         if none_group_members:
             groups[none_group + 1] = none_group_members
@@ -191,14 +195,10 @@ class TopDownAlgorithm(QgsProcessingAlgorithm):
         feedback.pushInfo('Group processing started!')
         results['OUTPUT'] = []
         for key, group in groups.items():
-            groupLayer, Sf_id = self.selectGroup(group, layer, self.holderAttribute, context)
-            try:
-                context.temporaryLayerStore().addMapLayer(groupLayer)
-            except Exception as e:
-                groupLayer = context.temporaryLayerStore().mapLayer(Sf_id)
-            feedback.pushInfo(f'Group {key} processing started with {groupLayer.featureCount()} features')
+            self.selectGroup(group, self.permanent_data['layer'], self.holderAttribute, context)
+            feedback.pushInfo(f'Group {key} processing started with {self.permanent_data["groupLayer"].featureCount()} features')
             tempResult = processing.run("Polygon Grouper:polygon_grouper", {
-                    'Inputlayer': groupLayer,
+                    'Inputlayer': self.permanent_data['groupLayer'],
                     'Preference': True,
                     'AssignedByField': [self.holderAttribute],
                     'BalancedByField': parameters['BalancedByField'],
@@ -216,57 +216,37 @@ class TopDownAlgorithm(QgsProcessingAlgorithm):
             try:
                 groupedLayer = tempResult['OUTPUT']
                 groupedMerged = tempResult['MERGED']
-                groupedLayer.setName(f"Group {key} - {swappedLayer.name()} - {parameters['Postfix']}")
+                groupedLayer.setName(f"Group {key} - {self.permanent_data['swappedLayer'].name()} - {parameters['Postfix']}")
                 groupedLayer.triggerRepaint()
                 #rename_file(groupedLayer, f"Group {key} - {swappedLayer.name()}")
-                groupedMerged.setName(f"Group {key} - {mergedLayer.name()} - {parameters['Postfix']}")
+                groupedMerged.setName(f"Group {key} - { self.permanent_data['mergedLayer'].name()} - {parameters['Postfix']}")
                 groupedMerged.triggerRepaint()
                 #rename_file(groupedMerged, f"Group {key} - {mergedLayer.name()}")
-                layer.removeSelection()
+                self.permanent_data['layer'].removeSelection()
                 results['OUTPUT'].append(groupedLayer)
             except KeyError:
-                groupedLayer = groupLayer
-                groupedLayer.setName(f"Group {key} - {swappedLayer.name()} - {parameters['Postfix']} no changes")
+                groupedLayer = self.permanent_data["groupLayer"]
+                groupedLayer.setName(f"Group {key} - {self.permanent_data['swappedLayer'].name()} - {parameters['Postfix']} no changes")
                 #rename_file(groupedLayer, f"Group {key} - {swappedLayer.name()} - no changes")
                 groupedLayer.triggerRepaint()
-                layer.removeSelection()
+                self.permanent_data['layer'].removeSelection()
                 QgsProject.instance().addMapLayer(groupedLayer, False)
                 root = QgsProject().instance().layerTreeRoot()
                 root.insertLayer(0, groupedLayer)
                 results['OUTPUT'].append(groupedLayer)
-
+            QgsApplication.processEvents()
             #del groupLayer
         return results
 
     def selectGroup(self, group, layer, idAttribute, context):
-        values = []
-        fieldType = layer.fields().field(idAttribute).type()
+        quoted_values = [QgsExpression.quotedValue(v) for v in group]
+        expression = f'"{idAttribute}" IN ({",".join(map(str, quoted_values))})'
+        request = QgsFeatureRequest().setFilterExpression(expression)
 
-        for value in group:
-            if fieldType in (QVariant.Int, QVariant.LongLong):
-                values.append(str(value))
-            else:
-                values.append(QgsExpression.quotedString(str(value)))
-        expression = f'"{idAttribute}" IN ({",".join(values)})'
-
-        layer.selectByExpression(expression)
-        layer.triggerRepaint()
-        QgsApplication.processEvents()
-
-        algParams = {
-            'INPUT': layer,
-            'OUTPUT': 'TEMPORARY_OUTPUT'
-        }
-        selectedFeatures = processing.run('native:saveselectedfeatures', algParams,  context=context)["OUTPUT"]
-        sF_id = selectedFeatures.id()
-        print(type(selectedFeatures))
-
-        if isinstance(selectedFeatures, QgsVectorLayer):
-            context.temporaryLayerStore().addMapLayer(selectedFeatures)
-        loop = QEventLoop()
-        QTimer.singleShot(2000, loop.quit)
-        loop.exec_()
-        return selectedFeatures, sF_id
+        selectedFeatures = layer.materialize(request)
+        selectedFeatures.setName(f"temp_group_{random.randint(1000,9999)}")
+        self.permanent_data['groupLayer'] = selectedFeatures
+        
 
 def is_r_provider_installed():
     registry = QgsApplication.processingRegistry()

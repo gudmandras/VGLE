@@ -75,6 +75,7 @@ class PolygonGrouper(QgsProcessingAlgorithm):
         stats = QgsProcessingParameterBoolean('Stats', "Generate statistics", defaultValue=False)
         stats.setFlags(stats.flags() | QgsProcessingParameterDefinition.FlagAdvanced)
         self.addParameter(stats)
+        self.permanent_data = {}
 
     def name(self):
         return 'polygon_grouper'
@@ -135,59 +136,61 @@ class PolygonGrouper(QgsProcessingAlgorithm):
         self.strictHFI = parameters['StrictHFI']
         self.stats = parameters['Stats']
         inputLayer = self.parameterAsVectorLayer(parameters, 'Inputlayer', context)
-        self.inputLayer = inputLayer
+        self.permanent_data['inputLayer'] = inputLayer
         #context.temporaryLayerStore().addMapLayer(inputLayer)
         if parameters['OutputDirectory'] == 'TEMPORARY_OUTPUT':
             parameters['OutputDirectory'] = tempfile.mkdtemp()
        
-        vgle_utils.startLogging(inputLayer, parameters, timeStamp)
+        vgle_utils.startLogging(self.permanent_data['inputLayer'], parameters, timeStamp)
         # Create work file and get the starting dictionaries
-        tempLayer = vgle_layers.createTempLayer(inputLayer, parameters["OutputDirectory"],
+        tempLayer = vgle_layers.createTempLayer(self.permanent_data['inputLayer'], parameters["OutputDirectory"],
                                                 self.algorithmNames[self.algorithmIndex].lower(), timeStamp)
-        layer, self.holderAttribute = vgle_layers.setHolderField(tempLayer, parameters["AssignedByField"])
-        context.temporaryLayerStore().addMapLayer(layer)
+        self.permanent_data['tempLayer'] = tempLayer                          
+        layer, self.holderAttribute = vgle_layers.setHolderField(self.permanent_data['tempLayer'], parameters["AssignedByField"])
+        self.permanent_data['layer'] = layer
+        context.temporaryLayerStore().addMapLayer(self.permanent_data['layer'])
         self.holderAttributeType, self.holderAttributeLenght = \
-            vgle_features.getFieldProperties(tempLayer, self.holderAttribute)
-        holdersWithHoldings, holdersHoldingNumber = vgle_features.getHoldersHoldings(layer, self.holderAttribute)
-        layer, self.idAttribute, holdersWithHoldings = vgle_layers.createIdField(layer, holdersWithHoldings)
-        layer.dataProvider().createSpatialIndex()
-        holdingsWithArea = vgle_features.getHoldingsAreas(layer, parameters["BalancedByField"], self.idAttribute)
+            vgle_features.getFieldProperties(self.permanent_data['tempLayer'], self.holderAttribute)
+        holdersWithHoldings, holdersHoldingNumber = vgle_features.getHoldersHoldings(self.permanent_data['layer'], self.holderAttribute)
+        self.permanent_data['layer'], self.idAttribute, holdersWithHoldings = vgle_layers.createIdField(self.permanent_data['layer'], holdersWithHoldings)
+        self.permanent_data['layer'].dataProvider().createSpatialIndex()
+        holdingsWithArea = vgle_features.getHoldingsAreas(self.permanent_data['layer'], parameters["BalancedByField"], self.idAttribute)
         self.holdersWithHoldings = holdersWithHoldings
         self.holdersHoldingNumber = holdersHoldingNumber
         self.holdingsWithArea = holdingsWithArea
         self.holdersTotalArea = vgle_utils.calculateTotalArea(self.holdersWithHoldings, self.holdingsWithArea)
 
         if parameters['Preference']:
-            selectedFeatures = vgle_features.getSelectedFeatures(inputLayer)
-            self.seeds, self.selectedHolders = vgle_utils.determineSeedPolygons(layer, self,
+            selectedFeatures = vgle_features.getSelectedFeatures(self.permanent_data['inputLayer'])
+            self.seeds, self.selectedHolders = vgle_utils.determineSeedPolygons(self.permanent_data['layer'], self,
                                                                                 parameters['Preference'],
                                                                                 selectedFeatures)
         else:
-            self.seeds, self.selectedHolders = vgle_utils.determineSeedPolygons(layer, self)
+            self.seeds, self.selectedHolders = vgle_utils.determineSeedPolygons(self.permanent_data['layer'], self)
 
         feedback.pushInfo('Calculate distance matrix')
         featureThreshold = 5000
-        totalFeatures = layer.featureCount()
+        totalFeatures = self.permanent_data['layer'].featureCount()
         if totalFeatures > featureThreshold or self.simply:
             if self.simply:
-                self.distanceMatrix = vgle_utils.createDistanceMatrix(self, layer, simply=self.simply)
+                self.distanceMatrix = vgle_utils.createDistanceMatrix(self, self.permanent_data['layer'], simply=self.simply)
                 self.filteredDistanceMatrix = self.distanceMatrix.copy()
             else:
-                self.distanceMatrix = vgle_utils.createDistanceMatrix(self, layer, nearestPoints=int(totalFeatures*0.1), simply=self.simply)
+                self.distanceMatrix = vgle_utils.createDistanceMatrix(self, self.permanent_data['layer'], nearestPoints=int(totalFeatures*0.1), simply=self.simply)
                 self.filteredDistanceMatrix = vgle_utils.filterDistanceMatrix(self.distance, self.distanceMatrix)
         else:
-            self.distanceMatrix = vgle_utils.createDistanceMatrix(self, layer)
+            self.distanceMatrix = vgle_utils.createDistanceMatrix(self, self.permanent_data['layer'])
             self.filteredDistanceMatrix = vgle_utils.filterDistanceMatrix(self.distance, self.distanceMatrix)
         feedback.pushInfo('Distance matrix calculated')
 
         feedback.pushInfo('Calculate total distances')
-        self.totalDistances, self.holdingWithSeedDistance = vgle_utils.calculateTotalDistances(self, layer)
+        self.totalDistances, self.holdingWithSeedDistance = vgle_utils.calculateTotalDistances(self, self.permanent_data['layer'])
         feedback.pushInfo('Total distances calculated')
 
         if parameters['Stats']:
-            beforeData = vgle_utils.calculateStatData(self, layer, self.holderAttribute)
+            beforeData = vgle_utils.calculateStatData(self, self.permanent_data['layer'], self.holderAttribute)
             self.interactionTable = vgle_utils.createInteractionOutput(self.holdersWithHoldings)
-            copiedLayer = vgle_layers.copyLayer(layer, f"{inputLayer.name()}_before_stats_{timeStamp}")
+            copiedLayer = vgle_layers.copyLayer(self.permanent_data['layer'], f"{inputLayer.name()}_before_stats_{timeStamp}")
             mergedBELayer = vgle_layers.createMergedFile(self, copiedLayer, None)
             mergedBEData = vgle_utils.calculateStatData(self, mergedBELayer, self.holderAttribute)
 
@@ -197,25 +200,25 @@ class PolygonGrouper(QgsProcessingAlgorithm):
             return {}
         # Start one of the functions
         if self.algorithmIndex == 0:
-            swapedLayer, totalAreas = vgle_methods.neighbours(self, layer, feedback, context=context)
+            swapedLayer, totalAreas = vgle_methods.neighbours(self, self.permanent_data['layer'], feedback, context=context)
         elif self.algorithmIndex == 1:
             oneSeedBoolean = vgle_utils.checkSeedNumber(self.seeds, feedback)
             if oneSeedBoolean:
-                swapedLayer, totalAreas = vgle_methods.closer(self, layer, feedback, context=context)
+                swapedLayer, totalAreas = vgle_methods.closer(self, self.permanent_data['layer'], feedback, context=context)
             else:
                 swapedLayer = False
         elif self.algorithmIndex == 2:
             oneSeedBoolean = vgle_utils.checkSeedNumber(self.seeds, feedback)
             if oneSeedBoolean:
                 originalSeeds = copy.deepcopy(self.seeds)
-                swapedLayer, totalAreas = vgle_methods.neighbours(self, layer, feedback, context=context)
+                swapedLayer, totalAreas = vgle_methods.neighbours(self, self.permanent_data['layer'], feedback, context=context)
                 swapedLayer, totalAreas = vgle_methods.closer(self, swapedLayer, feedback, originalSeeds, totalAreas, context=context)
             else:
                 swapedLayer = False
         elif self.algorithmIndex == 3:
             oneSeedBoolean = vgle_utils.checkSeedNumber(self.seeds, feedback)
             if oneSeedBoolean:
-                swapedLayer, totalAreas = vgle_methods.closer(self, layer, feedback, context=context)
+                swapedLayer, totalAreas = vgle_methods.closer(self, self.permanent_data['layer'], feedback, context=context)
                 swapedLayer, totalAreas = vgle_methods.neighbours(self, swapedLayer, feedback, totalAreas, context=context)
             else:
                 swapedLayer = False
@@ -234,17 +237,17 @@ class PolygonGrouper(QgsProcessingAlgorithm):
 
             mergedLayer = vgle_layers.createMergedFile(self, swapedLayer, parameters["OutputDirectory"])
             toDeleteAttr = [attr for attr in vgle_layers.getAttributesNames(mergedLayer)
-                            if attr not in vgle_layers.getAttributesNames(inputLayer)]
+                            if attr not in vgle_layers.getAttributesNames(self.permanent_data['inputLayer'])]
             vgle_layers.cleanMergedLayer(self, toDeleteAttr, mergedLayer)
 
-            vgle_layers.copyStyle(self, inputLayer, swapedLayer)
-            vgle_layers.copyStyle(self, inputLayer, mergedLayer)
+            vgle_layers.copyStyle(self, self.permanent_data['inputLayer'], swapedLayer)
+            vgle_layers.copyStyle(self, self.permanent_data['inputLayer'], mergedLayer)
 
             QgsProject.instance().addMapLayer(mergedLayer, False)
             root = QgsProject().instance().layerTreeRoot()
             root.insertLayer(0, mergedLayer)
 
-            layer.removeSelection()
+            self.permanent_data['layer'].removeSelection()
 
             if parameters['Stats']:
                 lastHolderAttribute = int(self.actualHolderAttribute.split('_')[0])

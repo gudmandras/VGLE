@@ -15,7 +15,8 @@ from qgis.core import (Qgis,
                        QgsField,
                        QgsVectorLayer,
                        QgsFeatureRequest,
-                       QgsWkbTypes)
+                       QgsWkbTypes,
+                       QgsSpatialIndex)
 
 
 def getFieldProperties(layer, fieldName):
@@ -92,36 +93,25 @@ def getHoldingsAreas(layer, areaId, idAttribute):
     return holdingsWithAreas
 
 
-def getNeighbours(idAttribute, layer, seed, context, feedback):
-    """
-    DESCRIPTION: Get neighbours holdings of a certain polygon
-    INPUTS:
-            layer: QgsVectorLayer
-            seed: holding id of the holder's seed polygon
-    OUTPUTS:
-            neighboursIds: List, holding ids
-            neighbours: QgsVectorLayer
-    """
-    expression = f'"{idAttribute}" = \'{seed}\''
-    layer.selectByExpression(expression)
-    algParams = {
-        'INPUT': layer,
-        'OUTPUT': 'TEMPORARY_OUTPUT'
-    }
-    seedFeatures = processing.run('native:saveselectedfeatures', algParams, context=context)["OUTPUT"]
-    algParams = {
-        'INPUT': layer,
-        'INTERSECT': seedFeatures,
-        'PREDICATE': 4,
-        'OUTPUT': 'TEMPORARY_OUTPUT'
-    }
-    neighbours = processing.run('native:extractbylocation', algParams, context=context)["OUTPUT"]
-    layer.removeSelection()
+def getNeighbours(idAttribute, layer, seed_id, context, feedback):
+    req = QgsFeatureRequest().setFilterExpression(f'"{idAttribute}" = \'{seed_id}\'')
+    seed_feature = next(layer.getFeatures(req), None)
+    seed_geom = seed_feature.geometry()
+    spatial_index = QgsSpatialIndex(layer.getFeatures())
+    
+    candidate_ids = spatial_index.intersects(seed_geom.boundingBox())
+    neighboursIds = []
+    req = QgsFeatureRequest().setFilterFids(candidate_ids)
+    neighbor_features = []
+    
+    for candidate in layer.getFeatures(req):
+        if candidate[idAttribute] == seed_id:
+            continue
+        if candidate.geometry().touches(seed_geom) or candidate.geometry().intersects(seed_geom):
+            neighboursIds.append(candidate[idAttribute])
+            neighbor_features.append(candidate)
 
-    neighboursFeatures = neighbours.getFeatures()
-    neighboursIds = [neighboursFeature.attribute(idAttribute) for neighboursFeature in neighboursFeatures]
-
-    return neighboursIds, neighbours
+    return neighboursIds, neighbor_features
 
 
 def maxDistance(self, featureIds, seed, layer=None):
@@ -236,7 +226,7 @@ def filterTouchingFeatures(self, layer, toSeed=False):
         'INTERSECT': mergedSeed,
         'OUTPUT': 'TEMPORARY_OUTPUT'
     }
-    processing.run("native:selectbylocation", algParams)
+    processing.run("native:selectbylocation", algParams, is_child_algorithm=True)
     selectedFeatures = layer.selectedFeatures()
     for feature in selectedFeatures:
         idValue = feature.attribute(self.idAttribute)
