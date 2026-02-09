@@ -155,14 +155,10 @@ class JustTopDownAlgorithm(QgsProcessingAlgorithm):
         feedback.pushInfo('Group processing started!')
         results['OUTPUT'] = []
         for key, group in groups.items():
-            groupLayer, Sf_id = self.selectGroup(group, self.permanent_data['layer'], self.holderAttribute, context)
-            try:
-                context.temporaryLayerStore().addMapLayer(groupLayer)
-            except Exception as e:
-                groupLayer = context.temporaryLayerStore().mapLayer(Sf_id)
-            feedback.pushInfo(f'Group {key} processing started with {groupLayer.featureCount()} features')
+            self.selectGroup(group, self.permanent_data['layer'], self.holderAttribute, context, key)
+            feedback.pushInfo(f'Group {key} processing started with {self.permanent_data["groupLayer"].featureCount()} features')
             tempResult = processing.run("Polygon Grouper:polygon_grouper", {
-                    'Inputlayer': groupLayer,
+                    'Inputlayer': self.permanent_data['groupLayer'],
                     'Preference': True,
                     'AssignedByField': [self.holderAttribute],
                     'BalancedByField': parameters['BalancedByField'],
@@ -198,17 +194,24 @@ class JustTopDownAlgorithm(QgsProcessingAlgorithm):
                 root = QgsProject().instance().layerTreeRoot()
                 root.insertLayer(0, groupedLayer)
                 results['OUTPUT'].append(groupedLayer)
+            try:
+                del tempResult
+                gc.collect()
+            except:
+                pass
+            QgsApplication.processEvents()
 
             #del groupLayer
         return results
 
-    def selectGroup(self, group, layer, idAttribute, context):
+    def selectGroup(self, group, layer, idAttribute, context, key):
         quoted_values = [QgsExpression.quotedValue(v) for v in group]
         expression = f'"{idAttribute}" IN ({",".join(map(str, quoted_values))})'
         request = QgsFeatureRequest().setFilterExpression(expression)
 
         selectedFeatures = layer.materialize(request)
-        selectedFeatures.setName(f"temp_group_{random.randint(1000,9999)}")
+        selectedFeatures.setName(f"topdown_group_{key}")
+        context.temporaryLayerStore().addMapLayer(selectedFeatures)
         self.permanent_data['groupLayer'] = selectedFeatures
 
 def is_r_provider_installed():

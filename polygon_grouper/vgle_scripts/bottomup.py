@@ -3,6 +3,7 @@ from qgis.core import (QgsProject,
                        QgsApplication,
                        QgsProcessing,
                        QgsProcessingAlgorithm,
+                       QgsFeatureRequest,
                        QgsProcessingMultiStepFeedback,
                        QgsProcessingParameterBoolean,
                        QgsProcessingParameterVectorLayer,
@@ -62,6 +63,7 @@ class BottomUpAlgorithm(QgsProcessingAlgorithm):
                                                        minValue=0, defaultValue=20)
         holdersTreshold.setFlags(holdersTreshold.flags() | QgsProcessingParameterDefinition.FlagAdvanced)
         self.addParameter(holdersTreshold)
+        self.permanent_data = {}
 
 
     def tr(self, string):
@@ -96,21 +98,25 @@ class BottomUpAlgorithm(QgsProcessingAlgorithm):
         results = {}
         timeStamp = datetime.fromtimestamp(time.time()).strftime("%d_%m_%Y_%H_%M_%S")
         inputLayer = self.parameterAsVectorLayer(parameters, 'Inputlayer', context)
-        if not len(inputLayer.selectedFeatures()) or inputLayer.selectedFeatureCount() == 0:
+        self.permanent_data['inputLayer'] = inputLayer
+
+        if not len(self.permanent_data['inputLayer'].selectedFeatures()) or self.permanent_data['inputLayer'].selectedFeatureCount() == 0:
             feedback.reportError('Please select features to process', fatalError=True)
             return {}   
         if parameters['OutputDirectory'] == 'TEMPORARY_OUTPUT':
             parameters['OutputDirectory'] = tempfile.mkdtemp()
 
-        tempLayer = vgle_layers.createTempLayer(inputLayer, parameters["OutputDirectory"],
+        tempLayer = vgle_layers.createTempLayer(self.permanent_data['inputLayer'], parameters["OutputDirectory"],
                                                 'bottomup', timeStamp)
-        layer, self.holderAttribute = vgle_layers.setHolderField(tempLayer, parameters["AssignedByField"])
-
-        selectedHolders = [h[self.holderAttribute] for h in inputLayer.selectedFeatures()]
+        self.permanent_data['tempLayer'] = tempLayer
+        layer, self.holderAttribute = vgle_layers.setHolderField(self.permanent_data['tempLayer'], parameters["AssignedByField"])
+        self.permanent_data['layer'] = layer
+        context.temporaryLayerStore().addMapLayer(layer)
+        selectedHolders = [h[self.holderAttribute] for h in self.permanent_data['inputLayer'].selectedFeatures()]
 
         try:
             tempResult0 = processing.run("Polygon Grouper:polygon_grouper", {
-                    'Inputlayer': layer,
+                    'Inputlayer': self.permanent_data['layer'],
                     'Preference': True,
                     'AssignedByField': [self.holderAttribute],
                     'BalancedByField': parameters['BalancedByField'],
@@ -127,6 +133,8 @@ class BottomUpAlgorithm(QgsProcessingAlgorithm):
                 }, context=context, feedback=feedback)
             swappedLayer = tempResult0['OUTPUT']
             mergedLayer = tempResult0['MERGED']
+            self.permanent_data['swappedLayer'] = swappedLayer
+            self.permanent_data['mergedLayer'] = mergedLayer
         except KeyError as e:
             feedback.reportError('No change was made - bottom up process terminated!', fatalError=True)
             return {}
@@ -135,7 +143,7 @@ class BottomUpAlgorithm(QgsProcessingAlgorithm):
         if parameters['holdersThreshold'] > len(selectedHolders):
             feedback.pushInfo('Group creation started')
             project = QgsProject.instance()
-            change_log = [layer for layer in project.mapLayers().values() if layer.name() == 'Change log'][-1]
+            change_log = [self.permanent_data['layer'] for self.permanent_data['layer'] in project.mapLayers().values() if self.permanent_data['layer'].name() == 'Change log'][-1]
             holders = list(set([f['Holder ID'] for f in change_log.getFeatures()]))
             
             group = selectedHolders.copy() 
@@ -182,14 +190,14 @@ class BottomUpAlgorithm(QgsProcessingAlgorithm):
                     currentHolders = nextHolders
             feedback.pushInfo(f'Final group len: {len(group)} - members:{group}')
 
-            fields = swappedLayer.fields()
+            fields = self.permanent_data['swappedLayer'].fields()
             last_index = fields.count() - 1
             last_field_name = fields.at(last_index).name()
 
-            groupLayer = self.selectGroup(group, swappedLayer, last_field_name)
+            self.selectGroup(group, self.permanent_data['swappedLayer'], last_field_name)
             feedback.pushInfo('Group created')
             tempResult = processing.run("Polygon Grouper:polygon_grouper", {
-                    'Inputlayer': groupLayer,
+                    'Inputlayer': self.permanent_data['groupLayer'],
                     'Preference': True,
                     'AssignedByField': [last_field_name],
                     'BalancedByField': parameters['BalancedByField'],
@@ -207,24 +215,24 @@ class BottomUpAlgorithm(QgsProcessingAlgorithm):
             try:
                 groupedLayer = tempResult['OUTPUT']
                 groupedMerged = tempResult['MERGED']
-                groupedLayer.setName(f"Bottomup group - {swappedLayer.name()}")
-                groupedMerged.setName(f"Bottomup group  - {mergedLayer.name()}")
+                groupedLayer.setName(f"Bottomup group - {self.permanent_data['swappedLayer'].name()}")
+                groupedMerged.setName(f"Bottomup group  - {self.permanent_data['mergedLayer'].name()}")
                 groupedLayer.triggerRepaint()
                 groupedMerged.triggerRepaint()
                 results['OUTPUT'] = groupedLayer
             except KeyError:
                 feedback.pushInfo('No changes were made for the created group')
-                results['OUTPUT'] = swappedLayer
-                results['MERGED'] = mergedLayer
+                results['OUTPUT'] = self.permanent_data['swappedLayer']
+                results['MERGED'] = self.permanent_data['mergedLayer']
         else:
             group = selectedHolders.copy() 
-            fields = swappedLayer.fields()
+            fields = self.permanent_data['swappedLayer'].fields()
             last_index = fields.count() - 1
             last_field_name = fields.at(last_index).name()
 
-            groupLayer = self.selectGroup(group, swappedLayer, last_field_name)
+            self.selectGroup(group, self.permanent_data['swappedLayer'], last_field_name)
             tempResult = processing.run("Polygon Grouper:polygon_grouper", {
-                'Inputlayer': groupLayer,
+                'Inputlayer': self.permanent_data['groupLayer'],
                 'Preference': True,
                 'AssignedByField': [last_field_name],
                 'BalancedByField': parameters['BalancedByField'],
@@ -242,16 +250,16 @@ class BottomUpAlgorithm(QgsProcessingAlgorithm):
             try:
                 groupedLayer = tempResult['OUTPUT']
                 groupedMerged = tempResult['MERGED']
-                groupedLayer.setName(f"Bottomup group - {swappedLayer.name()}")
-                groupedMerged.setName(f"Bottomup group  - {mergedLayer.name()}")
+                groupedLayer.setName(f"Bottomup group - {self.permanent_data['swappedLayer'].name()}")
+                groupedMerged.setName(f"Bottomup group  - {self.permanent_data['mergedLayer'].name()}")
                 groupedLayer.triggerRepaint()
                 groupedMerged.triggerRepaint()
                 results['OUTPUT'] = groupedLayer
             except KeyError:
                 feedback.pushInfo('No changes were made for the created group')
-                results['OUTPUT'] = swappedLayer
-                results['MERGED'] = mergedLayer
-        inputLayer.removeSelection()
+                results['OUTPUT'] = self.permanent_data['swappedLayer']
+                results['MERGED'] = self.permanent_data['mergedLayer']
+        self.permanent_data['inputLayer'].removeSelection()
         return results
 
                 
@@ -282,15 +290,12 @@ class BottomUpAlgorithm(QgsProcessingAlgorithm):
                 expression = f'"{idAttribute}" = \'{part}\''
             else:
                 expression += f'OR "{idAttribute}" = \'{part}\''
-        layer.selectByExpression(expression)
-        layer.triggerRepaint()
-        QgsApplication.processEvents()
-        algParams = {
-            'INPUT': layer,
-            'OUTPUT': 'TEMPORARY_OUTPUT'
-        }
-        selectedFeatures = processing.run('native:saveselectedfeatures', algParams)["OUTPUT"]
-        return selectedFeatures
+
+        request = QgsFeatureRequest().setFilterExpression(expression)
+
+        selectedFeatures = layer.materialize(request)
+        selectedFeatures.setName(f"bottomup_group")
+        self.permanent_data['groupLayer'] = selectedFeatures
 
             
 

@@ -8,12 +8,14 @@ import logging
 import os.path
 import tempfile
 import time
+import gc
 from datetime import datetime
 
 from qgis.PyQt.QtCore import QCoreApplication
 from qgis.PyQt.QtWidgets import QDialog, QVBoxLayout, QPushButton, QWidget
 from qgis.core import (QgsProject,
                        QgsProcessing,
+                       QgsApplication,
                        QgsProcessingAlgorithm,
                        QgsProcessingMultiStepFeedback,
                        QgsProcessingParameterBoolean,
@@ -137,6 +139,7 @@ class PolygonGrouper(QgsProcessingAlgorithm):
         self.stats = parameters['Stats']
         inputLayer = self.parameterAsVectorLayer(parameters, 'Inputlayer', context)
         context.temporaryLayerStore().addMapLayer(inputLayer)
+        QgsApplication.processEvents()
         self.permanent_data['inputLayer'] = inputLayer
         if parameters['OutputDirectory'] == 'TEMPORARY_OUTPUT':
             parameters['OutputDirectory'] = tempfile.mkdtemp()
@@ -149,7 +152,6 @@ class PolygonGrouper(QgsProcessingAlgorithm):
         self.permanent_data['tempLayer'] = tempLayer                          
         layer, self.holderAttribute = vgle_layers.setHolderField(self.permanent_data['tempLayer'], parameters["AssignedByField"])
         self.permanent_data['layer'] = layer
-        context.temporaryLayerStore().addMapLayer(layer)
         self.holderAttributeType, self.holderAttributeLenght = \
             vgle_features.getFieldProperties(self.permanent_data['tempLayer'], self.holderAttribute)
         holdersWithHoldings, holdersHoldingNumber = vgle_features.getHoldersHoldings(self.permanent_data['layer'], self.holderAttribute)
@@ -278,6 +280,7 @@ class PolygonGrouper(QgsProcessingAlgorithm):
             vgle_utils.endLogging()   
             results['OUTPUT'] = swapedLayer
             results['MERGED'] = mergedLayer
+
             return results
         else:
             if self.strictHDI or self.strictHFI:

@@ -3,6 +3,7 @@ from datetime import datetime
 
 from qgis.PyQt.QtCore import QCoreApplication, QVariant, QEventLoop, QTimer
 from processing.core.Processing import Processing
+from processing.core.ProcessingConfig import ProcessingConfig
 from qgis.core import (QgsProject,
                        QgsExpression,
                        QgsSettings,
@@ -98,6 +99,8 @@ class TopDownAlgorithm(QgsProcessingAlgorithm):
             return f"<html><body><p>Error reading description file: {e}</p></body></html>"
 
     def processAlgorithm(self, parameters, context, feedback):
+        #import ptvsd
+        #ptvsd.debug_this_thread()
         results = {}
 
         if not is_r_provider_installed():
@@ -122,10 +125,10 @@ class TopDownAlgorithm(QgsProcessingAlgorithm):
             parameters['OutputDirectory'] = tempfile.mkdtemp()
         tempLayer = vgle_layers.createTempLayer(self.permanent_data['inputLayer'], parameters["OutputDirectory"],
                                                 'topdown', timeStamp)
-        self.permanent_data['tempLayer'] = tempLayer                                             
+        self.permanent_data['tempLayer'] = tempLayer                                          
         layer, self.holderAttribute = vgle_layers.setHolderField(self.permanent_data['tempLayer'], parameters["AssignedByField"])
-        self.permanent_data['layer'] = layer
         context.temporaryLayerStore().addMapLayer(layer)
+        self.permanent_data['layer'] = layer
         firstResult = processing.run("Polygon Grouper:polygon_grouper", {
                 'Inputlayer': self.permanent_data['layer'],
                 'Preference': False,
@@ -141,7 +144,7 @@ class TopDownAlgorithm(QgsProcessingAlgorithm):
                 'StrictHFI': parameters['StrictHFI'],
                 'Simply': parameters['Simply'],
                 'Stats': True
-            }, context=context, feedback=feedback)
+            },  context=context, feedback=feedback)
         swappedLayer = firstResult['OUTPUT']
         mergedLayer = firstResult['MERGED']
         self.permanent_data['swappedLayer'] = swappedLayer
@@ -195,7 +198,7 @@ class TopDownAlgorithm(QgsProcessingAlgorithm):
         feedback.pushInfo('Group processing started!')
         results['OUTPUT'] = []
         for key, group in groups.items():
-            self.selectGroup(group, self.permanent_data['layer'], self.holderAttribute, context)
+            self.selectGroup(group, self.permanent_data['layer'], self.holderAttribute, context, key)
             feedback.pushInfo(f'Group {key} processing started with {self.permanent_data["groupLayer"].featureCount()} features')
             tempResult = processing.run("Polygon Grouper:polygon_grouper", {
                     'Inputlayer': self.permanent_data['groupLayer'],
@@ -223,7 +226,6 @@ class TopDownAlgorithm(QgsProcessingAlgorithm):
                 groupedMerged.triggerRepaint()
                 #rename_file(groupedMerged, f"Group {key} - {mergedLayer.name()}")
                 self.permanent_data['layer'].removeSelection()
-                results['OUTPUT'].append(groupedLayer)
             except KeyError:
                 groupedLayer = self.permanent_data["groupLayer"]
                 groupedLayer.setName(f"Group {key} - {self.permanent_data['swappedLayer'].name()} - {parameters['Postfix']} no changes")
@@ -233,20 +235,25 @@ class TopDownAlgorithm(QgsProcessingAlgorithm):
                 QgsProject.instance().addMapLayer(groupedLayer, False)
                 root = QgsProject().instance().layerTreeRoot()
                 root.insertLayer(0, groupedLayer)
-                results['OUTPUT'].append(groupedLayer)
-            del self.permanent_data['groupLayer'], tempResult
-            gc.collect()
+            #feedback.pushInfo(f"Temporary layers: {list(context.temporaryLayerStore().mapLayers().keys())}")
+            try:
+                del tempResult
+                gc.collect()
+            except:
+                pass
             QgsApplication.processEvents()
         return results
 
-    def selectGroup(self, group, layer, idAttribute, context):
+    def selectGroup(self, group, layer, idAttribute, context, key):
         quoted_values = [QgsExpression.quotedValue(v) for v in group]
         expression = f'"{idAttribute}" IN ({",".join(map(str, quoted_values))})'
         request = QgsFeatureRequest().setFilterExpression(expression)
 
         selectedFeatures = layer.materialize(request)
-        selectedFeatures.setName(f"temp_group_{random.randint(1000,9999)}")
+        selectedFeatures.setName(f"topdown_group_{key}")
+        context.temporaryLayerStore().addMapLayer(selectedFeatures)
         self.permanent_data['groupLayer'] = selectedFeatures
+        QgsApplication.processEvents()
         
 
 def is_r_provider_installed():
@@ -280,7 +287,9 @@ def checkR_folder():
     r_folder = settings.value("Processing/Configuration/R_FOLDER")
 
     if not r_folder:
-        return False
+        r_folder = ProcessingConfig.getSetting('R_FOLDER')
+        if not r_folder:
+            return False
 
     r_folder = str(r_folder)
 
@@ -291,6 +300,8 @@ def checkR_folder():
 def copyR_script(r_script_path):
     settings = QgsSettings()
     dest_folder = settings.value("Processing/Configuration/R_SCRIPTS_FOLDER")
+    if not dest_folder:
+        dest_folder = ProcessingConfig.getSetting('R_SCRIPTS_FOLDER')
 
     if dest_folder:
         dest_path = os.path.join(dest_folder, os.path.basename(r_script_path))

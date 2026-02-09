@@ -22,15 +22,18 @@
  ***************************************************************************/
  This script initializes the plugin, making it known to QGIS.
 """
+import sys, os, pathlib, glob
+sys.dont_write_bytecode = True
 
-
-# noinspection PyPep8Naming
-def classFactory(iface):  # pylint: disable=invalid-name
+def classFactory(iface): 
     """Load vgle class from file vgle.
 
     :param iface: A QGIS interface instance.
     :type iface: QgsInterface
     """
-    #
     from .polygon_grouper import vgle
+    pycFiles = glob.glob(os.path.dirname(os.path.abspath(__file__)) + "/*.pyc", recursive=True)
+    for pycFile in pycFiles:
+        if os.path.isfile(pycFile):
+            os.remove(pycFile)
     return vgle(iface)

@@ -44,6 +44,9 @@ from qgis.core import QgsMessageLog, Qgis
 
 MESSAGE_CATEGORY = 'Messages'
 
+import sys, os, pathlib, glob
+sys.dont_write_bytecode = True
+
 """
 def enable_remote_debugging():
     try:
@@ -75,6 +78,11 @@ class vgle(object):
         """
         self.provider = None
         #enable_remote_debugging()
+        pycFiles = glob.glob(os.path.dirname(os.path.abspath(__file__)) + "/*.pyc", recursive=True)
+        for pycFile in pycFiles:
+            if os.path.isfile(pycFile):
+                os.remove(pycFile)
+        
         # Save reference to the QGIS interface
         self.iface = iface
         # initialize plugin directory
