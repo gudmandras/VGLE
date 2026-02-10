@@ -18,6 +18,8 @@ from qgis.core import (QgsProject,
                        QgsProcessingParameterVectorLayer,
                        QgsProcessingParameterNumber,
                        QgsProcessingParameterEnum,
+                       QgsVectorFileWriter,
+                       QgsProcessingContext,
                        QgsProcessingParameterField,
                        QgsProcessingParameterString,
                        QgsProcessingParameterDefinition,
@@ -197,6 +199,7 @@ class TopDownAlgorithm(QgsProcessingAlgorithm):
 
         feedback.pushInfo('Group processing started!')
         results['OUTPUT'] = []
+        group_paths = {}
         for key, group in groups.items():
             self.selectGroup(group, self.permanent_data['layer'], self.holderAttribute, context, key)
             feedback.pushInfo(f'Group {key} processing started with {self.permanent_data["groupLayer"].featureCount()} features')
@@ -217,31 +220,65 @@ class TopDownAlgorithm(QgsProcessingAlgorithm):
                     'Stats': False
                 }, context=context, feedback=feedback)
             try:
-                groupedLayer = tempResult['OUTPUT']
-                groupedMerged = tempResult['MERGED']
-                groupedLayer.setName(f"Group {key} - {self.permanent_data['swappedLayer'].name()} - {parameters['Postfix']}")
-                groupedLayer.triggerRepaint()
-                #rename_file(groupedLayer, f"Group {key} - {swappedLayer.name()}")
-                groupedMerged.setName(f"Group {key} - { self.permanent_data['mergedLayer'].name()} - {parameters['Postfix']}")
-                groupedMerged.triggerRepaint()
-                #rename_file(groupedMerged, f"Group {key} - {mergedLayer.name()}")
-                self.permanent_data['layer'].removeSelection()
+                group_paths[key] = (tempResult['OUTPUT'].source(), tempResult['MERGED'].source())
+                remove_layer(tempResult['OUTPUT'].id())
+                remove_layer(tempResult['MERGED'].id())
             except KeyError:
                 groupedLayer = self.permanent_data["groupLayer"]
-                groupedLayer.setName(f"Group {key} - {self.permanent_data['swappedLayer'].name()} - {parameters['Postfix']} no changes")
-                #rename_file(groupedLayer, f"Group {key} - {swappedLayer.name()} - no changes")
-                groupedLayer.triggerRepaint()
-                self.permanent_data['layer'].removeSelection()
-                QgsProject.instance().addMapLayer(groupedLayer, False)
-                root = QgsProject().instance().layerTreeRoot()
-                root.insertLayer(0, groupedLayer)
-            #feedback.pushInfo(f"Temporary layers: {list(context.temporaryLayerStore().mapLayers().keys())}")
+                groupedLayer.setName(f"topdown_group_{key}_{self.permanent_data['swappedLayer'].name()}_{parameters['Postfix']}_no_changes")
+                
+                save_path = os.path.join(parameters['OutputDirectory'], f"topdown_group_{key}_{self.permanent_data['swappedLayer'].name()}_{parameters['Postfix']}_no_changes.gpkg")
+                options = QgsVectorFileWriter.SaveVectorOptions()
+                options.driverName = "GPKG"
+                QgsVectorFileWriter.writeAsVectorFormatV3(
+                    groupedLayer,
+                    save_path,
+                    context.transformContext(),
+                    options
+                )
+                group_paths[key] = (save_path, save_path)
+
+            try:
+                storage = context.temporaryLayerStore()
+                layer_ids = list(storage.mapLayers().keys())
+                for l_id in layer_ids:
+                    layer = storage.mapLayer(l_id)
+                    if 'neighbours' in layer.name() or 'topdown_group' in layer.name():
+                        storage.removeMapLayer(l_id)
+            except Exception as e:
+                pass
+            self.permanent_data['layer'].removeSelection()
             try:
                 del tempResult
                 gc.collect()
             except:
                 pass
             QgsApplication.processEvents()
+        outpath_1 = os.path.join(parameters['OutputDirectory'], f'topdown_groups_{timeStamp}.gpkg')
+        outpath_2 = os.path.join(parameters['OutputDirectory'], f'topdown_groups_merged_{timeStamp}.gpkg')
+        
+        merge_to_geopackage([group[0] for group in group_paths.values()], outpath_1, context)
+        merge_to_geopackage([group[1] for group in group_paths.values()], outpath_2, context)
+
+        layer1 =QgsVectorLayer(outpath_1, f"topdown_groups_{timeStamp}", "ogr")
+        layer2 = QgsVectorLayer(outpath_2, f"topdown_groups_merged_{timeStamp}", "ogr")
+
+        context.temporaryLayerStore().addMapLayer(layer1)
+        context.temporaryLayerStore().addMapLayer(layer2)
+
+        results['OUTPUT'] = layer1
+        results['MERGED'] = layer2
+
+        context.addLayerToLoadOnCompletion(
+            layer1.id(), 
+            QgsProcessingContext.LayerDetails(layer1.name(), context.project(), 'OUTPUT')
+        )
+
+        context.addLayerToLoadOnCompletion(
+            layer2.id(), 
+            QgsProcessingContext.LayerDetails(layer2.name(), context.project(), 'OUTPUT')
+        )
+
         return results
 
     def selectGroup(self, group, layer, idAttribute, context, key):
@@ -357,3 +394,34 @@ def rename_file(layer, new_name):
         "ogr"
 
     )
+
+def remove_layer(layer_id):
+    project = QgsProject.instance()
+    project.removeMapLayer(layer_id)
+
+def merge_to_geopackage(file_list, output_gpkg, context):
+    """
+    Takes a list of file paths and saves them into one GeoPackage.
+    """   
+    for i, file_path in enumerate(file_list):
+        layer = QgsVectorLayer(file_path, os.path.basename(file_path), "ogr")
+        
+        if not layer.isValid():
+            print(f"Skipping invalid layer: {file_path}")
+            continue
+
+        options = QgsVectorFileWriter.SaveVectorOptions()
+        options.driverName = "GPKG"
+        options.layerName = layer.name()
+        
+        if i == 0:
+            options.actionOnExistingFile = QgsVectorFileWriter.CreateOrOverwriteFile
+        else:
+            options.actionOnExistingFile = QgsVectorFileWriter.CreateOrOverwriteLayer
+
+        QgsVectorFileWriter.writeAsVectorFormatV3(
+            layer,
+            output_gpkg,
+            context.transformContext(),
+            options
+        )

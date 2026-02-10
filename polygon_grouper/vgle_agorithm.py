@@ -138,7 +138,8 @@ class PolygonGrouper(QgsProcessingAlgorithm):
         self.strictHFI = parameters['StrictHFI']
         self.stats = parameters['Stats']
         inputLayer = self.parameterAsVectorLayer(parameters, 'Inputlayer', context)
-        context.temporaryLayerStore().addMapLayer(inputLayer)
+        #context.temporaryLayerStore().addMapLayer(inputLayer)
+        QgsProject.instance().addMapLayer(inputLayer, False)
         QgsApplication.processEvents()
         self.permanent_data['inputLayer'] = inputLayer
         if parameters['OutputDirectory'] == 'TEMPORARY_OUTPUT':
