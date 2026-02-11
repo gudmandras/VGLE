@@ -281,7 +281,7 @@ class PolygonGrouper(QgsProcessingAlgorithm):
             vgle_utils.endLogging()   
             results['OUTPUT'] = swapedLayer
             results['MERGED'] = mergedLayer
-
+            QgsProject.instance().removeMapLayer(inputLayer.id())
             return results
         else:
             if self.strictHDI or self.strictHFI:
@@ -289,4 +289,5 @@ class PolygonGrouper(QgsProcessingAlgorithm):
             else:
                 feedback.pushInfo('No change was made! Try to modify the parameters and run again.') 
             vgle_utils.endLogging()   
+            QgsProject.instance().removeMapLayer(inputLayer.id())
             return {}

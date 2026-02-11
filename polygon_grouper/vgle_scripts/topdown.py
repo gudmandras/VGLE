@@ -1,5 +1,6 @@
 import random, tempfile, time, os, shutil, gc
 from datetime import datetime
+from osgeo import ogr
 
 from qgis.PyQt.QtCore import QCoreApplication, QVariant, QEventLoop, QTimer
 from processing.core.Processing import Processing
@@ -22,6 +23,7 @@ from qgis.core import (QgsProject,
                        QgsProcessingContext,
                        QgsProcessingParameterField,
                        QgsProcessingParameterString,
+                       QgsDataSourceUri,
                        QgsProcessingParameterDefinition,
                        QgsProcessingParameterFolderDestination)
 from qgis import processing
@@ -230,7 +232,7 @@ class TopDownAlgorithm(QgsProcessingAlgorithm):
                 save_path = os.path.join(parameters['OutputDirectory'], f"topdown_group_{key}_{self.permanent_data['swappedLayer'].name()}_{parameters['Postfix']}_no_changes.gpkg")
                 options = QgsVectorFileWriter.SaveVectorOptions()
                 options.driverName = "GPKG"
-                QgsVectorFileWriter.writeAsVectorFormatV3(
+                QgsVectorFileWriter.writeAsVectorFormatV2(
                     groupedLayer,
                     save_path,
                     context.transformContext(),
@@ -260,24 +262,16 @@ class TopDownAlgorithm(QgsProcessingAlgorithm):
         merge_to_geopackage([group[0] for group in group_paths.values()], outpath_1, context)
         merge_to_geopackage([group[1] for group in group_paths.values()], outpath_2, context)
 
-        layer1 =QgsVectorLayer(outpath_1, f"topdown_groups_{timeStamp}", "ogr")
+        delete_shapefiles([group[0] for group in group_paths.values()])
+        delete_shapefiles([group[1] for group in group_paths.values()])
+
+        layer1 = QgsVectorLayer(outpath_1, f"topdown_groups_{timeStamp}", "ogr")
         layer2 = QgsVectorLayer(outpath_2, f"topdown_groups_merged_{timeStamp}", "ogr")
 
-        context.temporaryLayerStore().addMapLayer(layer1)
-        context.temporaryLayerStore().addMapLayer(layer2)
-
-        results['OUTPUT'] = layer1
-        results['MERGED'] = layer2
-
-        context.addLayerToLoadOnCompletion(
-            layer1.id(), 
-            QgsProcessingContext.LayerDetails(layer1.name(), context.project(), 'OUTPUT')
-        )
-
-        context.addLayerToLoadOnCompletion(
-            layer2.id(), 
-            QgsProcessingContext.LayerDetails(layer2.name(), context.project(), 'OUTPUT')
-        )
+        results['OUTPUT'] = []
+        self.add_groups(outpath_1, result['OUTPUT'], context)
+        results['MERGED'] = []
+        self.add_groups(outpath_2, result['MERGED'], context)
 
         return results
 
@@ -291,6 +285,27 @@ class TopDownAlgorithm(QgsProcessingAlgorithm):
         context.temporaryLayerStore().addMapLayer(selectedFeatures)
         self.permanent_data['groupLayer'] = selectedFeatures
         QgsApplication.processEvents()
+
+    def add_groups(self, geopackage, results, context):
+        layers_in_gpkg = QgsDataSourceUri().decode(geopackage) 
+        ds = ogr.Open(geopackage)
+        layer_names = []
+
+        for i in range(ds.GetLayerCount()):
+            layer_obj = ds.GetLayerByIndex(i)
+            layer_name = layer_obj.GetName()
+            layer_names.append(layer_name)
+            ds = None
+        uri = f"{geopackage}|layername={layer_name}"
+        vlayer = QgsVectorLayer(uri, layer_name, "ogr")
+        context.temporaryLayerStore().addMapLayer(vlayer)
+        results.append(vlayer)
+        context.addLayerToLoadOnCompletion(
+        vlayer.id(), 
+        QgsProcessingContext.LayerDetails(vlayer.name(), context.project(), 'OUTPUT')
+        )
+
+        
         
 
 def is_r_provider_installed():
@@ -425,3 +440,7 @@ def merge_to_geopackage(file_list, output_gpkg, context):
             context.transformContext(),
             options
         )
+
+def delete_shapefiles(shape_files):
+    for shape in shape_files:
+        QgsVectorFileWriter.deleteShapeFile(shape)
