@@ -137,17 +137,16 @@ class PolygonGrouper(QgsProcessingAlgorithm):
         self.strictHDI = parameters['StrictHDI']
         self.strictHFI = parameters['StrictHFI']
         self.stats = parameters['Stats']
-        inputLayer = self.parameterAsVectorLayer(parameters, 'Inputlayer', context)
+
+        source = self.parameterAsSource(parameters, 'Inputlayer', context)
         #context.temporaryLayerStore().addMapLayer(inputLayer)
-        QgsProject.instance().addMapLayer(inputLayer, False)
-        QgsApplication.processEvents()
-        self.permanent_data['inputLayer'] = inputLayer
+        self.permanent_data['source'] = source
         if parameters['OutputDirectory'] == 'TEMPORARY_OUTPUT':
             parameters['OutputDirectory'] = tempfile.mkdtemp()
        
-        vgle_utils.startLogging(self.permanent_data['inputLayer'], parameters, timeStamp)
+        vgle_utils.startLogging(self.parameterAsVectorLayer(parameters, 'Inputlayer', context), parameters, timeStamp)
         # Create work file and get the starting dictionaries
-        tempLayer = vgle_layers.createTempLayer(self.permanent_data['inputLayer'], parameters["OutputDirectory"],
+        tempLayer = vgle_layers.createTempLayer(self.parameterAsVectorLayer(parameters, 'Inputlayer', context), parameters["OutputDirectory"],
                                                 self.algorithmNames[self.algorithmIndex].lower(), timeStamp)
         context.temporaryLayerStore().addMapLayer(tempLayer)
         self.permanent_data['tempLayer'] = tempLayer                          
@@ -165,7 +164,7 @@ class PolygonGrouper(QgsProcessingAlgorithm):
         self.holdersTotalArea = vgle_utils.calculateTotalArea(self.holdersWithHoldings, self.holdingsWithArea)
 
         if parameters['Preference']:
-            selectedFeatures = vgle_features.getSelectedFeatures(self.permanent_data['inputLayer'])
+            selectedFeatures = vgle_features.getSelectedFeatures(self.parameterAsVectorLayer(parameters, 'Inputlayer', context))
             self.seeds, self.selectedHolders = vgle_utils.determineSeedPolygons(self.permanent_data['layer'], self,
                                                                                 parameters['Preference'],
                                                                                 selectedFeatures)
@@ -194,7 +193,7 @@ class PolygonGrouper(QgsProcessingAlgorithm):
         if parameters['Stats']:
             beforeData = vgle_utils.calculateStatData(self, self.permanent_data['layer'], self.holderAttribute)
             self.interactionTable = vgle_utils.createInteractionOutput(self.holdersWithHoldings)
-            copiedLayer = vgle_layers.copyLayer(self.permanent_data['layer'], f"{inputLayer.name()}_before_stats_{timeStamp}")
+            copiedLayer = vgle_layers.copyLayer(self.permanent_data['layer'], f"{self.parameterAsVectorLayer(parameters, 'Inputlayer', context).name()}_before_stats_{timeStamp}")
             mergedBELayer = vgle_layers.createMergedFile(self, copiedLayer, None)
             mergedBEData = vgle_utils.calculateStatData(self, mergedBELayer, self.holderAttribute)
 
@@ -241,12 +240,11 @@ class PolygonGrouper(QgsProcessingAlgorithm):
 
             mergedLayer = vgle_layers.createMergedFile(self, swapedLayer, parameters["OutputDirectory"])
             toDeleteAttr = [attr for attr in vgle_layers.getAttributesNames(mergedLayer)
-                            if attr not in vgle_layers.getAttributesNames(self.permanent_data['inputLayer'])]
+                            if attr not in vgle_layers.getAttributesNames(self.parameterAsVectorLayer(parameters, 'Inputlayer', context))]
             vgle_layers.cleanMergedLayer(self, toDeleteAttr, mergedLayer)
 
-            vgle_layers.copyStyle(self, self.permanent_data['inputLayer'], swapedLayer)
-            vgle_layers.copyStyle(self, self.permanent_data['inputLayer'], mergedLayer)
-
+            vgle_layers.copyStyle(self, self.parameterAsVectorLayer(parameters, 'Inputlayer', context), swapedLayer)
+            vgle_layers.copyStyle(self, self.parameterAsVectorLayer(parameters, 'Inputlayer', context), mergedLayer)
             QgsProject.instance().addMapLayer(mergedLayer, False)
             root = QgsProject().instance().layerTreeRoot()
             root.insertLayer(0, mergedLayer)
@@ -281,7 +279,6 @@ class PolygonGrouper(QgsProcessingAlgorithm):
             vgle_utils.endLogging()   
             results['OUTPUT'] = swapedLayer
             results['MERGED'] = mergedLayer
-            QgsProject.instance().removeMapLayer(inputLayer.id())
             return results
         else:
             if self.strictHDI or self.strictHFI:
@@ -289,5 +286,4 @@ class PolygonGrouper(QgsProcessingAlgorithm):
             else:
                 feedback.pushInfo('No change was made! Try to modify the parameters and run again.') 
             vgle_utils.endLogging()   
-            QgsProject.instance().removeMapLayer(inputLayer.id())
             return {}

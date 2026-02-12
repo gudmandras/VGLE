@@ -269,9 +269,9 @@ class TopDownAlgorithm(QgsProcessingAlgorithm):
         layer2 = QgsVectorLayer(outpath_2, f"topdown_groups_merged_{timeStamp}", "ogr")
 
         results['OUTPUT'] = []
-        self.add_groups(outpath_1, result['OUTPUT'], context)
         results['MERGED'] = []
-        self.add_groups(outpath_2, result['MERGED'], context)
+        self.add_groups(outpath_1, results, context, keyword='OUTPUT')
+        self.add_groups(outpath_2, results, context, keyword='MERGED')
 
         return results
 
@@ -286,24 +286,24 @@ class TopDownAlgorithm(QgsProcessingAlgorithm):
         self.permanent_data['groupLayer'] = selectedFeatures
         QgsApplication.processEvents()
 
-    def add_groups(self, geopackage, results, context):
-        layers_in_gpkg = QgsDataSourceUri().decode(geopackage) 
-        ds = ogr.Open(geopackage)
+    def add_groups(self, geopackage, results, context, keyword=None):
+        vlayer = QgsVectorLayer(geopackage, "test", "ogr")
+        sublayers = vlayer.dataProvider().subLayers()
         layer_names = []
 
-        for i in range(ds.GetLayerCount()):
-            layer_obj = ds.GetLayerByIndex(i)
-            layer_name = layer_obj.GetName()
+        for sublayer in sublayers:
+            layer_name = sublayer.split("!!")[2]
             layer_names.append(layer_name)
-            ds = None
-        uri = f"{geopackage}|layername={layer_name}"
-        vlayer = QgsVectorLayer(uri, layer_name, "ogr")
-        context.temporaryLayerStore().addMapLayer(vlayer)
-        results.append(vlayer)
-        context.addLayerToLoadOnCompletion(
-        vlayer.id(), 
-        QgsProcessingContext.LayerDetails(vlayer.name(), context.project(), 'OUTPUT')
-        )
+
+        for layer_name in layer_names:
+            uri = f"{geopackage}|layername={layer_name}"
+            vlayer = QgsVectorLayer(uri, layer_name, "ogr")
+            context.temporaryLayerStore().addMapLayer(vlayer)
+            results[keyword].append(vlayer)
+            context.addLayerToLoadOnCompletion(
+            vlayer.id(), 
+            QgsProcessingContext.LayerDetails(vlayer.name(), context.project(), keyword)
+            )
 
         
         
