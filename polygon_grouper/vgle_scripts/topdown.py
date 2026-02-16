@@ -306,8 +306,6 @@ class TopDownAlgorithm(QgsProcessingAlgorithm):
             )
 
         
-        
-
 def is_r_provider_installed():
     registry = QgsApplication.processingRegistry()
     providers = [p.id() for p in registry.providers()]
@@ -442,5 +440,12 @@ def merge_to_geopackage(file_list, output_gpkg, context):
         )
 
 def delete_shapefiles(shape_files):
+    mapLayers = QgsProject.instance().mapLayers()
+    mapLayersSources = {layer.source().split("|")[0]: layer for layer in mapLayers.values()}
     for shape in shape_files:
-        QgsVectorFileWriter.deleteShapeFile(shape)
+        if shape in mapLayersSources:
+            QgsProject.instance().removeMapLayer(mapLayersSources[shape].id())
+        print(f"Deleting shapefile: {shape}")
+        deleted = QgsVectorFileWriter.deleteShapeFile(shape)
+        if not deleted:
+            print(f"Failed to delete shapefile: {shape}")

@@ -139,7 +139,9 @@ class PolygonGrouper(QgsProcessingAlgorithm):
         self.stats = parameters['Stats']
 
         source = self.parameterAsSource(parameters, 'Inputlayer', context)
-        #context.temporaryLayerStore().addMapLayer(inputLayer)
+        selectedFeatures = vgle_features.getSelectedFeatures(self.parameterAsVectorLayer(parameters, 'Inputlayer', context))
+        context.temporaryLayerStore().addMapLayer(selectedFeatures)
+        self.permanent_data['selectedFeatures'] = selectedFeatures
         self.permanent_data['source'] = source
         if parameters['OutputDirectory'] == 'TEMPORARY_OUTPUT':
             parameters['OutputDirectory'] = tempfile.mkdtemp()
@@ -164,10 +166,12 @@ class PolygonGrouper(QgsProcessingAlgorithm):
         self.holdersTotalArea = vgle_utils.calculateTotalArea(self.holdersWithHoldings, self.holdingsWithArea)
 
         if parameters['Preference']:
-            selectedFeatures = vgle_features.getSelectedFeatures(self.parameterAsVectorLayer(parameters, 'Inputlayer', context))
             self.seeds, self.selectedHolders = vgle_utils.determineSeedPolygons(self.permanent_data['layer'], self,
                                                                                 parameters['Preference'],
-                                                                                selectedFeatures)
+                                                                                self.permanent_data['selectedFeatures'])
+            context.temporaryLayerStore().removeMapLayer(self.permanent_data['selectedFeatures'].id())
+            del self.permanent_data['selectedFeatures']
+            gc.collect()
         else:
             self.seeds, self.selectedHolders = vgle_utils.determineSeedPolygons(self.permanent_data['layer'], self)
 
