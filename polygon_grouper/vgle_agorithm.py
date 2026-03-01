@@ -78,6 +78,7 @@ class PolygonGrouper(QgsProcessingAlgorithm):
         stats.setFlags(stats.flags() | QgsProcessingParameterDefinition.FlagAdvanced)
         self.addParameter(stats)
         self.permanent_data = {}
+        self.backup_data = {}
 
     def name(self):
         return 'polygon_grouper'
@@ -151,15 +152,16 @@ class PolygonGrouper(QgsProcessingAlgorithm):
         tempLayer = vgle_layers.createTempLayer(self.parameterAsVectorLayer(parameters, 'Inputlayer', context), parameters["OutputDirectory"],
                                                 self.algorithmNames[self.algorithmIndex].lower(), timeStamp)
         context.temporaryLayerStore().addMapLayer(tempLayer)
-        self.permanent_data['tempLayer'] = tempLayer                          
+        self.permanent_data['tempLayer'] = tempLayer  
+        self.backup_data['tempLayer'] = vgle_utils.extractLayerData(self.permanent_data['tempLayer'])
         layer, self.holderAttribute = vgle_layers.setHolderField(self.permanent_data['tempLayer'], parameters["AssignedByField"])
         self.permanent_data['layer'] = layer
         self.holderAttributeType, self.holderAttributeLenght = \
-            vgle_features.getFieldProperties(self.permanent_data['tempLayer'], self.holderAttribute)
+            vgle_features.getFieldProperties(self.permanent_data['tempLayer'], self.holderAttribute, self.backup_data['tempLayer'])
         holdersWithHoldings, holdersHoldingNumber = vgle_features.getHoldersHoldings(self.permanent_data['layer'], self.holderAttribute)
         self.permanent_data['layer'], self.idAttribute, holdersWithHoldings = vgle_layers.createIdField(self.permanent_data['layer'], holdersWithHoldings)
         self.permanent_data['layer'].dataProvider().createSpatialIndex()
-        holdingsWithArea = vgle_features.getHoldingsAreas(self.permanent_data['layer'], parameters["BalancedByField"], self.idAttribute)
+        holdingsWithArea = vgle_features.getHoldingsAreas(self.permanent_data['layer'], parameters["BalancedByField"], self.idAttribute, self.backup_data['tempLayer'])
         self.holdersWithHoldings = holdersWithHoldings
         self.holdersHoldingNumber = holdersHoldingNumber
         self.holdingsWithArea = holdingsWithArea
@@ -219,6 +221,7 @@ class PolygonGrouper(QgsProcessingAlgorithm):
             if oneSeedBoolean:
                 originalSeeds = copy.deepcopy(self.seeds)
                 swapedLayer, totalAreas = vgle_methods.neighbours(self, self.permanent_data['layer'], feedback, context=context)
+                swapedLayer = vgle_utils.checkVectorLayer(swapedLayer, self.backup_data['tempLayer'])
                 swapedLayer, totalAreas = vgle_methods.closer(self, swapedLayer, feedback, originalSeeds, totalAreas, context=context)
             else:
                 swapedLayer = False
@@ -226,7 +229,11 @@ class PolygonGrouper(QgsProcessingAlgorithm):
             oneSeedBoolean = vgle_utils.checkSeedNumber(self.seeds, feedback)
             if oneSeedBoolean:
                 swapedLayer, totalAreas = vgle_methods.closer(self, self.permanent_data['layer'], feedback, context=context)
+                swapedLayer = vgle_utils.checkVectorLayer(swapedLayer, self.backup_data['tempLayer'])
+                context.temporaryLayerStore().addMapLayer(swapedLayer)
+                self.permanent_data['swapedLayer'] = swapedLayer
                 swapedLayer, totalAreas = vgle_methods.neighbours(self, swapedLayer, feedback, totalAreas, context=context)
+                swapedLayer = vgle_utils.checkVectorLayer(swapedLayer, self.backup_data['tempLayer'])
             else:
                 swapedLayer = False
         #elif self.algorithmIndex == 4:
@@ -256,6 +263,7 @@ class PolygonGrouper(QgsProcessingAlgorithm):
             self.permanent_data['layer'].removeSelection()
 
             if parameters['Stats']:
+                swapedLayer = vgle_utils.checkVectorLayer(swapedLayer, self.backup_data['tempLayer'])
                 lastHolderAttribute = int(self.actualHolderAttribute.split('_')[0])
                 if lastHolderAttribute >= 10:
                     attributeName = str(lastHolderAttribute) + self.actualHolderAttribute[2:]

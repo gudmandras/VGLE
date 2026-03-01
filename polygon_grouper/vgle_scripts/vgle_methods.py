@@ -67,7 +67,7 @@ def neighbours(self, layer, feedback, totalAreas=None, context=None):
                 continue
 
             for seed in seeds:
-                neighboursIds, neighboursFeatures = vgle_features.getNeighbours(self.idAttribute, layer, seed, context=context, feedback=feedback)
+                neighboursIds, neighboursFeatures = vgle_features.getNeighbours(self.idAttribute, layer, seed, context=context, feedback=feedback, backup_data=self.backup_data['tempLayer'])
                 inDistance = self.filteredDistanceMatrix[seed]
                 distanceChanges = vgle_utils.getChangableHoldings(self, inDistance)
                 localChangables = [distance for distance in distanceChanges
@@ -265,6 +265,7 @@ def neighbours(self, layer, feedback, totalAreas=None, context=None):
         feedback.pushInfo(f'Save turn results to the file')
         if feedback.isCanceled():
             return None, None
+        
     return layer, holdersLocalTotalArea
 
 
@@ -328,7 +329,7 @@ def neighbours_multi(self, layer, feedback, totalAreas=None):
                 continue
 
             for seed in seeds:
-                neighboursIds, neighboursLayer = vgle_features.getNeighbours(self.idAttribute, layer, seed)
+                neighboursIds, neighboursLayer = vgle_features.getNeighbours(self.idAttribute, layer, seed, context=context, feedback=feedback, backup_data=self.backup_data['tempLayer'])
                 inDistance = self.filteredDistanceMatrix[seed]
                 distanceChanges = vgle_utils.getChangableHoldings(self, inDistance)
                 localChangables = [distance for distance in distanceChanges
@@ -1097,7 +1098,7 @@ def hybrid_method(self, layer, feedback):
 
             minAreaHolding = min([self.holdingsWithArea[hold] for hold in holdings])*((100-self.tolerance)/100)
 
-            neighboursIds, neighboursLayer = vgle_features.getNeighbours(self.idAttribute, layer, seed)
+            neighboursIds, neighboursLayer = vgle_features.getNeighbours(self.idAttribute, layer, seed, context=context, feedback=feedback, backup_data=self.backup_data['tempLayer'])
             neighboursHolders = list(set([neighboursFeature.attribute(self.actualHolderAttribute) for neighboursFeature in neighboursLayer.getFeatures()]))
             del neighboursIds, neighboursLayer
 

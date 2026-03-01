@@ -1,5 +1,6 @@
 import random, tempfile, time, os, shutil, gc
 from datetime import datetime
+from pathlib import Path
 from osgeo import ogr
 
 from qgis.PyQt.QtCore import QCoreApplication, QVariant, QEventLoop, QTimer
@@ -28,7 +29,7 @@ from qgis.core import (QgsProject,
                        QgsProcessingParameterFolderDestination)
 from qgis import processing
 import qgis.utils
-from . import vgle_layers
+from . import vgle_layers, vgle_utils
 
 
 
@@ -73,6 +74,7 @@ class TopDownAlgorithm(QgsProcessingAlgorithm):
         simplfy.setFlags(simplfy.flags() | QgsProcessingParameterDefinition.FlagAdvanced)
         self.addParameter(simplfy)
         self.permanent_data = {}
+        self.backup_data = {}
 
     def tr(self, string):
         return QCoreApplication.translate('Processing', string)
@@ -129,7 +131,8 @@ class TopDownAlgorithm(QgsProcessingAlgorithm):
             parameters['OutputDirectory'] = tempfile.mkdtemp()
         tempLayer = vgle_layers.createTempLayer(self.permanent_data['inputLayer'], parameters["OutputDirectory"],
                                                 'topdown', timeStamp)
-        self.permanent_data['tempLayer'] = tempLayer                                          
+        self.permanent_data['tempLayer'] = tempLayer
+        self.backup_data['tempLayer'] = vgle_utils.extractLayerData(self.permanent_data['tempLayer'])                                          
         layer, self.holderAttribute = vgle_layers.setHolderField(self.permanent_data['tempLayer'], parameters["AssignedByField"])
         context.temporaryLayerStore().addMapLayer(layer)
         self.permanent_data['layer'] = layer
@@ -205,22 +208,42 @@ class TopDownAlgorithm(QgsProcessingAlgorithm):
         for key, group in groups.items():
             self.selectGroup(group, self.permanent_data['layer'], self.holderAttribute, context, key)
             feedback.pushInfo(f'Group {key} processing started with {self.permanent_data["groupLayer"].featureCount()} features')
-            tempResult = processing.run("Polygon Grouper:polygon_grouper", {
-                    'Inputlayer': self.permanent_data['groupLayer'],
-                    'Preference': True,
-                    'AssignedByField': [self.holderAttribute],
-                    'BalancedByField': parameters['BalancedByField'],
-                    'Tolerance': parameters['Tolerance'],
-                    'DistanceThreshold': parameters['DistanceThreshold'],
-                    'SwapToGet': parameters['SwapToGet'],
-                    'OutputDirectory': parameters['OutputDirectory'],
-                    'OnlySelected': False, 
-                    'Single': parameters['Single'],
-                    'StrictHDI': parameters['StrictHDI'],
-                    'StrictHFI': parameters['StrictHFI'],
-                    'Simply': parameters['Simply'],
-                    'Stats': False
-                }, context=context, feedback=feedback)
+            try:
+                tempResult = processing.run("Polygon Grouper:polygon_grouper", {
+                        'Inputlayer': self.permanent_data['groupLayer'],
+                        'Preference': True,
+                        'AssignedByField': [self.holderAttribute],
+                        'BalancedByField': parameters['BalancedByField'],
+                        'Tolerance': parameters['Tolerance'],
+                        'DistanceThreshold': parameters['DistanceThreshold'],
+                        'SwapToGet': parameters['SwapToGet'],
+                        'OutputDirectory': parameters['OutputDirectory'],
+                        'OnlySelected': False, 
+                        'Single': parameters['Single'],
+                        'StrictHDI': parameters['StrictHDI'],
+                        'StrictHFI': parameters['StrictHFI'],
+                        'Simply': False,
+                        'Stats': False
+                    }, context=context, feedback=feedback, is_child_algorithm=True)
+            except Exception as e:
+                self.permament_data['layer'] = vgle_utils.checkVectorLayer(self.permament_data['layer'], self.backup_data['tempLayer'])
+                self.selectGroup(group, self.permanent_data['layer'], self.holderAttribute, context, key)
+                tempResult = processing.run("Polygon Grouper:polygon_grouper", {
+                        'Inputlayer': self.permanent_data['groupLayer'].id(),
+                        'Preference': True,
+                        'AssignedByField': [self.holderAttribute],
+                        'BalancedByField': parameters['BalancedByField'],
+                        'Tolerance': parameters['Tolerance'],
+                        'DistanceThreshold': parameters['DistanceThreshold'],
+                        'SwapToGet': parameters['SwapToGet'],
+                        'OutputDirectory': parameters['OutputDirectory'],
+                        'OnlySelected': False, 
+                        'Single': parameters['Single'],
+                        'StrictHDI': parameters['StrictHDI'],
+                        'StrictHFI': parameters['StrictHFI'],
+                        'Simply': False,
+                        'Stats': False
+                }, context=context, feedback=feedback, is_child_algorithm=True)
             try:
                 group_paths[key] = (tempResult['OUTPUT'].source(), tempResult['MERGED'].source())
                 remove_layer(tempResult['OUTPUT'].id())
@@ -262,11 +285,10 @@ class TopDownAlgorithm(QgsProcessingAlgorithm):
         merge_to_geopackage([group[0] for group in group_paths.values()], outpath_1, context)
         merge_to_geopackage([group[1] for group in group_paths.values()], outpath_2, context)
 
-        delete_shapefiles([group[0] for group in group_paths.values()])
-        delete_shapefiles([group[1] for group in group_paths.values()])
+        #layer1 = QgsVectorLayer(outpath_1, f"topdown_groups_{timeStamp}", "ogr")
+        #layer2 = QgsVectorLayer(outpath_2, f"topdown_groups_merged_{timeStamp}", "ogr")
 
-        layer1 = QgsVectorLayer(outpath_1, f"topdown_groups_{timeStamp}", "ogr")
-        layer2 = QgsVectorLayer(outpath_2, f"topdown_groups_merged_{timeStamp}", "ogr")
+        self.locked_files = [group[0] for group in group_paths.values()] + [group[1] for group in group_paths.values()]
 
         results['OUTPUT'] = []
         results['MERGED'] = []
@@ -276,6 +298,7 @@ class TopDownAlgorithm(QgsProcessingAlgorithm):
         return results
 
     def selectGroup(self, group, layer, idAttribute, context, key):
+        layer = vgle_utils.checkVectorLayer(layer, self.backup_data['tempLayer'])
         quoted_values = [QgsExpression.quotedValue(v) for v in group]
         expression = f'"{idAttribute}" IN ({",".join(map(str, quoted_values))})'
         request = QgsFeatureRequest().setFilterExpression(expression)
@@ -284,7 +307,7 @@ class TopDownAlgorithm(QgsProcessingAlgorithm):
         selectedFeatures.setName(f"topdown_group_{key}")
         context.temporaryLayerStore().addMapLayer(selectedFeatures)
         self.permanent_data['groupLayer'] = selectedFeatures
-        QgsApplication.processEvents()
+        #QgsApplication.processEvents()
 
     def add_groups(self, geopackage, results, context, keyword=None):
         vlayer = QgsVectorLayer(geopackage, "test", "ogr")
@@ -305,7 +328,11 @@ class TopDownAlgorithm(QgsProcessingAlgorithm):
             QgsProcessingContext.LayerDetails(vlayer.name(), context.project(), keyword)
             )
 
-        
+    def postProcessAlgorithm(self, context, feedback):
+        delete_shapefiles(self.locked_files)
+        return {}
+
+
 def is_r_provider_installed():
     registry = QgsApplication.processingRegistry()
     providers = [p.id() for p in registry.providers()]
@@ -417,7 +444,7 @@ def merge_to_geopackage(file_list, output_gpkg, context):
     Takes a list of file paths and saves them into one GeoPackage.
     """   
     for i, file_path in enumerate(file_list):
-        layer = QgsVectorLayer(file_path, os.path.basename(file_path), "ogr")
+        layer = QgsVectorLayer(file_path, str(Path(file_path).stem), "ogr")
         
         if not layer.isValid():
             print(f"Skipping invalid layer: {file_path}")
@@ -432,20 +459,51 @@ def merge_to_geopackage(file_list, output_gpkg, context):
         else:
             options.actionOnExistingFile = QgsVectorFileWriter.CreateOrOverwriteLayer
 
-        QgsVectorFileWriter.writeAsVectorFormatV3(
+        merge_result = QgsVectorFileWriter.writeAsVectorFormatV3(
             layer,
             output_gpkg,
             context.transformContext(),
             options
         )
-
+        if merge_result[0] == QgsVectorFileWriter.NoError:
+            try:
+                QgsProject.instance().removeMapLayer(layer.id())
+                layer.setDataSource("", "", "")
+                layer.dataProvider().reloadData()
+                del layer
+                gc.collect()
+                delete_shapefiles([file_path])
+            except Exception as e:
+                print(f"Error cleaning up layer {file_path}: {e}")
+        else:
+            pass
+        
 def delete_shapefiles(shape_files):
-    mapLayers = QgsProject.instance().mapLayers()
-    mapLayersSources = {layer.source().split("|")[0]: layer for layer in mapLayers.values()}
+    project = QgsProject.instance()
+    
     for shape in shape_files:
-        if shape in mapLayersSources:
-            QgsProject.instance().removeMapLayer(mapLayersSources[shape].id())
-        print(f"Deleting shapefile: {shape}")
-        deleted = QgsVectorFileWriter.deleteShapeFile(shape)
-        if not deleted:
-            print(f"Failed to delete shapefile: {shape}")
+        abs_shape = os.path.abspath(shape)
+        
+        layers_to_remove = [
+            l.id() for l in project.mapLayers().values() 
+            if os.path.abspath(l.source().split("|")[0]) == abs_shape
+        ]
+        if layers_to_remove:
+            project.removeMapLayers(layers_to_remove)
+
+        QgsApplication.processEvents()
+        gc.collect()
+
+        print(f"Deleting shapefile: {abs_shape}")
+        
+        success = QgsVectorFileWriter.deleteShapeFile(abs_shape)
+        
+        if not success:
+            try:
+                for ext in ['.shp', '.shx', '.dbf', '.prj', '.cpg', '.qpj']:
+                    part = abs_shape.replace('.shp', ext)
+                    if os.path.exists(part):
+                        os.remove(part)
+                print(f"Manual deletion successful for {abs_shape}")
+            except PermissionError:
+                print(f"CRITICAL: {abs_shape} is still locked by an external process.")

@@ -18,8 +18,10 @@ from qgis.core import (Qgis,
                        QgsWkbTypes,
                        QgsSpatialIndex)
 
+from . import vgle_utils
 
-def getFieldProperties(layer, fieldName):
+
+def getFieldProperties(layer, fieldName, backup_data):
     """
     DESCRIPTION: Give back of a field type and length
     INPUTS:
@@ -27,6 +29,7 @@ def getFieldProperties(layer, fieldName):
             fieldName: String, name of the field
     OUTPUTS: ogr type, integer
     """
+    vgle_utils.checkVectorLayer(layer, backup_data)
     for field in layer.fields():
         if field.name() == fieldName:
             return field.type(), field.length()
@@ -71,7 +74,7 @@ def getHoldersHoldings(layer, holderAttribute, attributeName=None):
     return holdersWithHoldings, holdersHoldingNumber
 
 
-def getHoldingsAreas(layer, areaId, idAttribute):
+def getHoldingsAreas(layer, areaId, idAttribute, backup_data):
     """
     DESCRIPTION: Create a dictionary for holding and its area
     INPUTS:
@@ -81,6 +84,7 @@ def getHoldingsAreas(layer, areaId, idAttribute):
     OUTPUTS: Dictionary, key: holding id, values: Integer, area
     """
     holdingsWithAreas = {}
+    vgle_utils.checkVectorLayer(layer, backup_data)
     features = layer.getFeatures()
     for feature in features:
         area = feature.attribute(areaId)
@@ -91,7 +95,8 @@ def getHoldingsAreas(layer, areaId, idAttribute):
     return holdingsWithAreas
 
 
-def getNeighbours(idAttribute, layer, seed_id, context, feedback):
+def getNeighbours(idAttribute, layer, seed_id, context, feedback, backup_data):
+    layer = vgle_utils.checkVectorLayer(layer, backup_data)
     req = QgsFeatureRequest().setFilterExpression(f'"{idAttribute}" = \'{seed_id}\'')
     seed_feature = next(layer.getFeatures(req), None)
     seed_geom = seed_feature.geometry()

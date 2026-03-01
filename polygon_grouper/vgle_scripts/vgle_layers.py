@@ -10,7 +10,7 @@ from qgis.core import (QgsVectorFileWriter,
                        QgsVectorLayer,
                        QgsProject,
                        QgsField)
-
+from . import vgle_utils
 
 def createTempLayer(layer, directory, postfix, timeStamp=None):
     """
@@ -223,6 +223,7 @@ def setTurnAttributes(self, layer, turn):
             turn: Integer
     OUTPUTS: QgsVectorLayer
     """
+    layer = vgle_utils.checkVectorLayer(layer, self.backup_data.get('tempLayer'))
     layer, newId = createNewAttribute(layer, turn, 'id', lenght=255)
     layer, newHolder = createNewAttribute(layer, turn, 'holder', typer=self.holderAttributeType,
                                           lenght=self.holderAttributeLenght)

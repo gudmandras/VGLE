@@ -7,6 +7,7 @@ from datetime import datetime
 import subprocess
 import pathlib as pa
 import math
+import sip
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from qgis.PyQt.QtCore import QVariant
@@ -118,6 +119,7 @@ def determineSeedPolygons(layer, self, preference=False, selectedFeatures=None):
     """
     holdersWithSeeds = {}
     selectedHolders = []
+    checkVectorLayer(layer, self.backup_data.get('tempLayer')) 
     if preference:
         algParams = {
             'INPUT': layer,
@@ -213,7 +215,7 @@ def createDistanceMatrix(self, layer, nearestPoints=0, simply=False):
                 dist = np.linalg.norm(points_A[i] - points_A[j])
                 distanceMatrix2[fids[i]][fids[j]] = dist
         del points_A, tree, results
-        return distanceMatrix
+        return distanceMatrix2
     
     algParams = {
         'INPUT': centroids,
@@ -334,6 +336,7 @@ def calculateStatData(self, layer, fieldName):
     OUTPUTS: Dictionary - Holder - # of holdings - Area - Average distance
     """
     statData = {}
+    checkVectorLayer(layer, self.backup_data.get('tempLayer'))
     holdersWithHoldings, holdersHoldingNumber = vgle_features.getHoldersHoldings(layer, fieldName, self.idAttribute)
     for holder, holdings in holdersWithHoldings.items():
         data = {}
@@ -1097,3 +1100,15 @@ def createFragmentationStat(self, data, mergedBeforeData):
         indicators.triggerRepaint()
     
     return indicators_data
+
+def extractLayerData(layer):
+    source = layer.source()
+    name = layer.name()
+    return (source, name)
+
+def checkVectorLayer(layer, missingData):
+    if (layer is None) or (not layer.isValid()) or sip.isdeleted(layer) or not isinstance(layer, QgsVectorLayer):
+        if missingData:
+            source, name = missingData
+            layer = QgsVectorLayer(source, name, "ogr")
+    return layer

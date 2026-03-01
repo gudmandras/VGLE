@@ -32,6 +32,7 @@ class StatAlgorithm(QgsProcessingAlgorithm):
                                                       allowMultiple=False, defaultValue=''))
         self.onlySelected = False
         self.useSingle = False
+        self.backup_data = {}
         
 
     def tr(self, string):
@@ -63,12 +64,13 @@ class StatAlgorithm(QgsProcessingAlgorithm):
         out = tempfile.mkdtemp()
         tempLayer = vgle_layers.createTempLayer(inputLayer, out,
                                                'forIndices', timeStamp)
+        self.backup_data['tempLayer'] = vgle_utils.extractLayerData(tempLayer)
         layer, self.holderAttribute = vgle_layers.setHolderField(tempLayer, [parameters["AssignedByField"]])
         feedback.pushInfo('self.holderAttribute: ' + str(self.holderAttribute))
-        self.holderAttributeType, self.holderAttributeLenght = vgle_features.getFieldProperties(layer, self.holderAttribute)
+        self.holderAttributeType, self.holderAttributeLenght = vgle_features.getFieldProperties(layer, self.holderAttribute, self.backup_data['tempLayer'])
         holdersWithHoldings, holdersHoldingNumber = vgle_features.getHoldersHoldings(layer, self.holderAttribute)
         layer, self.idAttribute, holdersWithHoldings = vgle_layers.createIdField(layer, holdersWithHoldings)
-        holdingsWithArea = vgle_features.getHoldingsAreas(layer, parameters["BalancedByField"], self.idAttribute)
+        holdingsWithArea = vgle_features.getHoldingsAreas(layer, parameters["BalancedByField"], self.idAttribute, self.backup_data['tempLayer'])
         self.holdersWithHoldings = holdersWithHoldings
         self.holdersHoldingNumber = holdersHoldingNumber
         self.holdingsWithArea = holdingsWithArea
