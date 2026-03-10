@@ -38,6 +38,8 @@ class TopDownAlgorithm(QgsProcessingAlgorithm):
     def initAlgorithm(self, config=None):
         self.addParameter(QgsProcessingParameterVectorLayer('Inputlayer', 'Input layer',
                                                             types=[QgsProcessing.TypeVectorPolygon], defaultValue=None))
+        self.addParameter(QgsProcessingParameterBoolean('Preference', 'Give preference for the selected features',
+                                                defaultValue=False))
         self.addParameter(QgsProcessingParameterField('AssignedByField', 'Holder by field',
                                                       type=QgsProcessingParameterField.Any,
                                                       parentLayerParameterName='Inputlayer', allowMultiple=True))
@@ -59,7 +61,11 @@ class TopDownAlgorithm(QgsProcessingAlgorithm):
         self.addParameter(QgsProcessingParameterFolderDestination('OutputDirectory', 'Output directory',
                                                                   defaultValue=None, createByDefault=True))
         self.algorithmNames = ['Neighbours', 'Closer', "Neighbours, then closer", "Closer, then neighbours"]
-        
+
+        onlySelected = QgsProcessingParameterBoolean('OnlySelected', 'Only use the selected features',
+                                                     defaultValue=False)
+        onlySelected.setFlags(onlySelected.flags() | QgsProcessingParameterDefinition.FlagAdvanced)
+        self.addParameter(onlySelected)
         single = QgsProcessingParameterBoolean('Single', "Use single holding's holders polygons", defaultValue=False)
         single.setFlags(single.flags() | QgsProcessingParameterDefinition.FlagAdvanced)
         self.addParameter(single)
@@ -124,6 +130,15 @@ class TopDownAlgorithm(QgsProcessingAlgorithm):
             feedback.reportError("R Provider - R folder is not configured. Cannot install RSX script.")
             return {}
 
+        if parameters['OnlySelected'] and parameters['Preference'] is not True:
+            feedback.reportError(f"'Only use the selected features' parameters works only with "
+                              f"'Give preference for the selected features parameter'. "
+                              f"'Give preference for the selected features parameter' is enabled")
+            parameters['Preference'] = True 
+        
+        if parameters['Preference']:
+            self.permanent_data['selectedHoldingsIds'] = self.parameterAsVectorLayer(parameters, 'Inputlayer', context).selectedFeatureIds()
+           
         timeStamp = datetime.fromtimestamp(time.time()).strftime("%d_%m_%Y_%H_%M_%S")
         inputLayer = self.parameterAsVectorLayer(parameters, 'Inputlayer', context)
         self.permanent_data['inputLayer'] = inputLayer
@@ -138,14 +153,14 @@ class TopDownAlgorithm(QgsProcessingAlgorithm):
         self.permanent_data['layer'] = layer
         firstResult = processing.run("Polygon Grouper:polygon_grouper", {
                 'Inputlayer': self.permanent_data['layer'],
-                'Preference': False,
+                'Preference': parameters['Preference'],
                 'AssignedByField': [self.holderAttribute],
                 'BalancedByField': parameters['BalancedByField'],
                 'Tolerance': parameters['Tolerance'],
                 'DistanceThreshold': parameters['DistanceThreshold'],
                 'SwapToGet': parameters['SwapToGet'],
                 'OutputDirectory': parameters['OutputDirectory'],
-                'OnlySelected': False, 
+                'OnlySelected': parameters['OnlySelected'],
                 'Single': parameters['Single'],
                 'StrictHDI': parameters['StrictHDI'],
                 'StrictHFI': parameters['StrictHFI'],
@@ -207,18 +222,29 @@ class TopDownAlgorithm(QgsProcessingAlgorithm):
         group_paths = {}
         for key, group in groups.items():
             self.selectGroup(group, self.permanent_data['layer'], self.holderAttribute, context, key)
+            if parameters['Preference']:
+                request = QgsFeatureRequest().setFilterFids(self.permanent_data['selectedHoldingsIds'])
+                selectedFeatures = self.parameterAsVectorLayer(parameters, 'Inputlayer', context).materialize(request)
+                algParams = {
+                    'INPUT': self.permanent_data['groupLayer'],
+                    'PREDICATE': [3],
+                    'METHOD': 0,
+                    'INTERSECT': selectedFeatures,
+                    'OUTPUT': 'TEMPORARY_OUTPUT'
+                }
+                processing.run("native:selectbylocation", algParams, is_child_algorithm=True)
             feedback.pushInfo(f'Group {key} processing started with {self.permanent_data["groupLayer"].featureCount()} features')
             try:
                 tempResult = processing.run("Polygon Grouper:polygon_grouper", {
                         'Inputlayer': self.permanent_data['groupLayer'],
-                        'Preference': True,
+                        'Preference': parameters['Preference'],
                         'AssignedByField': [self.holderAttribute],
                         'BalancedByField': parameters['BalancedByField'],
                         'Tolerance': parameters['Tolerance'],
                         'DistanceThreshold': parameters['DistanceThreshold'],
                         'SwapToGet': parameters['SwapToGet'],
                         'OutputDirectory': parameters['OutputDirectory'],
-                        'OnlySelected': False, 
+                        'OnlySelected':  parameters['OnlySelected'], 
                         'Single': parameters['Single'],
                         'StrictHDI': parameters['StrictHDI'],
                         'StrictHFI': parameters['StrictHFI'],
@@ -226,18 +252,29 @@ class TopDownAlgorithm(QgsProcessingAlgorithm):
                         'Stats': False
                     }, context=context, feedback=feedback, is_child_algorithm=True)
             except Exception as e:
-                self.permament_data['layer'] = vgle_utils.checkVectorLayer(self.permament_data['layer'], self.backup_data['tempLayer'])
+                self.permanent_data['layer'] = vgle_utils.checkVectorLayer(self.permanent_data['layer'], self.backup_data['tempLayer'])
                 self.selectGroup(group, self.permanent_data['layer'], self.holderAttribute, context, key)
+                if parameters['Preference']:
+                    request = QgsFeatureRequest().setFilterFids(self.permanent_data['selectedHoldingsIds'])
+                    selectedFeatures = self.parameterAsVectorLayer(parameters, 'Inputlayer', context).materialize(request)
+                    algParams = {
+                        'INPUT': self.permanent_data['groupLayer'],
+                        'PREDICATE': [3],
+                        'METHOD': 0,
+                        'INTERSECT': selectedFeatures,
+                        'OUTPUT': 'TEMPORARY_OUTPUT'
+                    }
+                    processing.run("native:selectbylocation", algParams, is_child_algorithm=True)
                 tempResult = processing.run("Polygon Grouper:polygon_grouper", {
                         'Inputlayer': self.permanent_data['groupLayer'].id(),
-                        'Preference': True,
+                        'Preference': parameters['Preference'],
                         'AssignedByField': [self.holderAttribute],
                         'BalancedByField': parameters['BalancedByField'],
                         'Tolerance': parameters['Tolerance'],
                         'DistanceThreshold': parameters['DistanceThreshold'],
                         'SwapToGet': parameters['SwapToGet'],
                         'OutputDirectory': parameters['OutputDirectory'],
-                        'OnlySelected': False, 
+                        'OnlySelected':  parameters['OnlySelected'], 
                         'Single': parameters['Single'],
                         'StrictHDI': parameters['StrictHDI'],
                         'StrictHFI': parameters['StrictHFI'],
@@ -268,7 +305,7 @@ class TopDownAlgorithm(QgsProcessingAlgorithm):
                 layer_ids = list(storage.mapLayers().keys())
                 for l_id in layer_ids:
                     layer = storage.mapLayer(l_id)
-                    if 'neighbours' in layer.name() or 'topdown_group' in layer.name():
+                    if 'neighbours' in layer.name() or 'closer' in layer.name() or 'topdown_group' in layer.name() or 'no_changes' in layer.name():
                         storage.removeMapLayer(l_id)
             except Exception as e:
                 pass

@@ -239,8 +239,8 @@ class PolygonGrouper(QgsProcessingAlgorithm):
         #elif self.algorithmIndex == 4:
         #    swapedLayer = vgle_methods.hybrid_method(self, layer, feedback)
         # Save results and create merged file
-        context.temporaryLayerStore().addMapLayer(swapedLayer)
         if swapedLayer:
+            context.temporaryLayerStore().addMapLayer(swapedLayer)
             feedback.setCurrentStep(self.steps-1)
 
             swapedLayer.commitChanges()
