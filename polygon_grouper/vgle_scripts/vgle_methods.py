@@ -20,6 +20,7 @@ def neighbours(self, layer, feedback, totalAreas=None, context=None):
             feedback: QgsProcessingMultiStepFeedback
     OUTPUTS: QgsVectorLayer
     """
+    maxTurn = 10
     changes = 0
     changer = True
     self.globalChangables = vgle_utils.getChangableHoldings(self)
@@ -27,22 +28,14 @@ def neighbours(self, layer, feedback, totalAreas=None, context=None):
     try:
         turn = int(self.actualHolderAttribute.split('_')[0])
         if self.algorithmIndex == 3:
-            if turn == (self.steps/2)-3:
-                self.actualHolderAttribute = \
-                    str(int(self.actualHolderAttribute.split('_')[0])) + self.actualHolderAttribute[2:]
-                self.actualIdAttribute = str(int(self.actualIdAttribute.split('_')[0])) + self.actualIdAttribute[2:]
+            changes = copy.deepcopy(self.counter)
+            if turn >= 10:
+                self.actualHolderAttribute = str(int(self.actualHolderAttribute.split('_')[0])-1) + self.actualHolderAttribute[2:]
+                self.actualIdAttribute = str(int(self.actualIdAttribute.split('_')[0])-1) + self.actualIdAttribute[2:]
             else:
-                if turn >= 10:
-                    self.actualHolderAttribute = \
-                        str(int(self.actualHolderAttribute.split('_')[0])-1) + self.actualHolderAttribute[2:]
-                    self.actualIdAttribute = \
-                        str(int(self.actualIdAttribute.split('_')[0])-1) + self.actualIdAttribute[2:]
-                else:
-                    self.actualHolderAttribute = \
-                        str(int(self.actualHolderAttribute.split('_')[0])-1) + self.actualHolderAttribute[1:]
-                    self.actualIdAttribute = \
-                        str(int(self.actualIdAttribute.split('_')[0])-1) + self.actualIdAttribute[1:]
-                turn -= 1
+                self.actualHolderAttribute = str(int(self.actualHolderAttribute.split('_')[0])-1) + self.actualHolderAttribute[1:]
+                self.actualIdAttribute = str(int(self.actualIdAttribute.split('_')[0])-1) + self.actualIdAttribute[1:]
+            turn -= 1
     except AttributeError:
         turn = 0
 
@@ -54,6 +47,7 @@ def neighbours(self, layer, feedback, totalAreas=None, context=None):
 
     while changer:
         turn += 1
+        maxTurn -= 1
         self.actualIdAttribute, self.actualHolderAttribute, layer = vgle_layers.setTurnAttributes(self, layer, turn)
         not_changables = []
         feedback.pushInfo(f'Turn {turn}')
@@ -229,41 +223,36 @@ def neighbours(self, layer, feedback, totalAreas=None, context=None):
                 not_changables.extend(changesIds)
 
 
-        if self.counter == 0:
-            feedback.pushInfo(f'Changes in turn {turn}: {self.counter}') 
-            logging.debug(f'Changes in turn {turn}: {self.counter}')
+        turnChanges = self.counter - changes
+        feedback.pushInfo(f'Changes in turn {turn}: {turnChanges}') 
+        logging.debug(f'Changes in turn {turn}: {turnChanges}')
+        if turnChanges == 0:
+            # No change happened, no continue in this scope, stop the algorithm
             changer = False
-            if (self.algorithmIndex == 0 or self.algorithmIndex == 3): 
-                return None, None
+            if self.counter == 0:
+                # No change at all, stop the algorithm
+                if (self.algorithmIndex == 0 or self.algorithmIndex == 3):
+                    # No continue of the algorithm, stop it
+                    return None, None
+                elif self.algorithmIndex == 2:
+                    # Continue with the next method, clear the turn attributes
+                    layer.startEditing()
+                    indexes = []
+                    indexes.append(layer.fields().indexFromName(self.actualIdAttribute))
+                    indexes.append(layer.fields().indexFromName(self.actualHolderAttribute))
+                    layer.deleteAttributes(indexes)
+                    layer.updateFields()
+                    layer.commitChanges()
+        elif maxTurn == 0:
+            # Max turn reached, stop the algorithm
+            changer = False
         else:
-            feedback.pushInfo(f'Changes in turn {turn}: {self.counter-changes}') 
-            logging.debug(f'Changes in turn {turn}: {self.counter-changes}')
-            if changes == self.counter:
-                changer = False
-                layer.startEditing()
-                indexes = []
-                indexes.append(layer.fields().indexFromName(self.actualIdAttribute))
-                indexes.append(layer.fields().indexFromName(self.actualHolderAttribute))
-                layer.deleteAttributes(indexes)
-                layer.updateFields()
-                layer.commitChanges()
-                lastHolderAttribute = int(self.actualHolderAttribute.split('_')[0])
-                if lastHolderAttribute >= 10:
-                    self.actualIdAttribute = str(lastHolderAttribute-1) + self.actualIdAttribute[2:]
-                    self.actualHolderAttribute = str(lastHolderAttribute-1) + self.actualHolderAttribute[2:]
-                else:
-                    self.actualIdAttribute = str(lastHolderAttribute-1) + self.actualIdAttribute[1:]
-                    self.actualHolderAttribute = str(lastHolderAttribute-1) + self.actualHolderAttribute[1:]
-                return layer, holdersLocalTotalArea
-            elif (self.algorithmIndex == 0 or self.algorithmIndex == 3) and (turn == self.steps-3):
-                changer = False
-            elif self.algorithmIndex == 2 and turn == (self.steps/2)-3:
-                changer = False 
-            else:
-                changes = copy.deepcopy(self.counter)
+            # Changes happened, continue to the next turn
+            changes = copy.deepcopy(self.counter)
         feedback.setCurrentStep(1 + turn)
         feedback.pushInfo(f'Save turn results to the file')
         if feedback.isCanceled():
+            vgle_utils.endLogging() 
             return None, None
         
     return layer, holdersLocalTotalArea
@@ -553,26 +542,23 @@ def closer(self, layer, feedback, seeds=None, totalAreas=None, context=None):
             seeds: List, holding ids
     OUTPUTS: QgsVectorLayer
     """
+    maxTurn = 15
     maxCombTurn = 2000
-    changes = 1
+    changes = 0
     changer = True
     self.globalChangables = vgle_utils.getChangableHoldings(self)
 
     if seeds:
         self.seeds = seeds
         turn = int(self.actualHolderAttribute.split('_')[0])
-        if self.algorithmIndex == 2:
-            if turn == (self.steps/2)-3:
-                self.actualHolderAttribute = str(int(self.actualHolderAttribute.split('_')[0])) + self.actualHolderAttribute[2:]
-                self.actualIdAttribute = str(int(self.actualIdAttribute.split('_')[0])) + self.actualIdAttribute[2:]
-            else:
-                if turn >= 10:
-                    self.actualHolderAttribute = str(int(self.actualHolderAttribute.split('_')[0])-1) + self.actualHolderAttribute[2:]
-                    self.actualIdAttribute = str(int(self.actualIdAttribute.split('_')[0])-1) + self.actualIdAttribute[2:]
-                else:
-                    self.actualHolderAttribute = str(int(self.actualHolderAttribute.split('_')[0])-1) + self.actualHolderAttribute[1:]
-                    self.actualIdAttribute = str(int(self.actualIdAttribute.split('_')[0])-1) + self.actualIdAttribute[1:]
-                turn -= 1
+        changes = copy.deepcopy(self.counter)
+        if turn >= 10:
+            self.actualHolderAttribute = str(int(self.actualHolderAttribute.split('_')[0])-1) + self.actualHolderAttribute[2:]
+            self.actualIdAttribute = str(int(self.actualIdAttribute.split('_')[0])-1) + self.actualIdAttribute[2:]
+        else:
+            self.actualHolderAttribute = str(int(self.actualHolderAttribute.split('_')[0])-1) + self.actualHolderAttribute[1:]
+            self.actualIdAttribute = str(int(self.actualIdAttribute.split('_')[0])-1) + self.actualIdAttribute[1:]
+        turn -= 1
     else:
         turn = 0
 
@@ -584,6 +570,7 @@ def closer(self, layer, feedback, seeds=None, totalAreas=None, context=None):
 
     while changer:
         turn += 1
+        maxTurn -= 1
         self.actualIdAttribute, self.actualHolderAttribute, layer = vgle_layers.setTurnAttributes(self, layer, turn)
         localHoldersWithHoldings = copy.deepcopy(self.holdersWithHoldings)
         localChangables = copy.deepcopy(self.globalChangables)
@@ -733,24 +720,19 @@ def closer(self, layer, feedback, seeds=None, totalAreas=None, context=None):
                     holdersLocalTotalArea[holder] = tempHolderTotalArea
                     holdersLocalTotalArea[targetHolder] = tempTargetTotalArea    
 
-        if feedback.isCanceled():
-            vgle_utils.endLogging() 
-            return None, None
-        if turn == 1:
-            logging.debug(f'Changes in turn {turn}: {self.counter}')
-            feedback.pushInfo(f'Changes in turn {turn}: {self.counter}') 
+        turnChanges = self.counter - changes
+        feedback.pushInfo(f'Changes in turn {turn}: {turnChanges}') 
+        logging.debug(f'Changes in turn {turn}: {turnChanges}')
+        if turnChanges == 0:
+            # No change happened, no continue in this scope, stop the algorithm
+            changer = False
             if self.counter == 0:
-                changer = False
-                return None, None
-            else:
-                changes = copy.deepcopy(self.counter)
-                vgle_features.filterTouchingFeatures(self, layer)
-        else:
-            logging.debug(f'Changes in turn {turn}: {self.counter - changes}')
-            feedback.pushInfo(f'Changes in turn {turn}: {self.counter - changes}')
-            if changes == self.counter:
-                changer = False
-                if self.algorithmIndex != 3:
+                # No change at all, stop the algorithm
+                if (self.algorithmIndex == 0 or self.algorithmIndex == 3):
+                    # No continue of the algorithm, stop it
+                    return None, None
+                elif self.algorithmIndex == 2:
+                    # Continue with the next method, clear the turn attributes
                     layer.startEditing()
                     indexes = []
                     indexes.append(layer.fields().indexFromName(self.actualIdAttribute))
@@ -758,24 +740,17 @@ def closer(self, layer, feedback, seeds=None, totalAreas=None, context=None):
                     layer.deleteAttributes(indexes)
                     layer.updateFields()
                     layer.commitChanges()
-                    lastHolderAttribute = int(self.actualHolderAttribute.split('_')[0])
-                    if lastHolderAttribute >= 10:
-                        self.actualIdAttribute = str(lastHolderAttribute-1) + self.actualIdAttribute[2:]
-                        self.actualHolderAttribute = str(lastHolderAttribute-1) + self.actualHolderAttribute[2:]
-                    else:
-                        self.actualIdAttribute = str(lastHolderAttribute-1) + self.actualIdAttribute[1:]
-                        self.actualHolderAttribute = str(lastHolderAttribute-1) + self.actualHolderAttribute[1:]
-            elif (self.algorithmIndex == 1 or self.algorithmIndex == 2) and (turn == self.steps-3):
-                vgle_features.filterTouchingFeatures(self, layer)
-                changer = False
-            elif self.algorithmIndex == 3 and turn == (self.steps/2)-3:
-                vgle_features.filterTouchingFeatures(self, layer)
-                changer = False
-            else:
-                changes = copy.deepcopy(self.counter)
-                vgle_features.filterTouchingFeatures(self, layer)
-        feedback.setCurrentStep(1+turn)
-        feedback.pushInfo('Save turn results to the file')
+        elif maxTurn == 0:
+            # Max turn reached, stop the algorithm
+            changer = False
+        else:
+            # Changes happened, continue to the next turn
+            changes = copy.deepcopy(self.counter)
+        feedback.setCurrentStep(1 + turn)
+        feedback.pushInfo(f'Save turn results to the file')
+        if feedback.isCanceled():
+            vgle_utils.endLogging() 
+            return None, None
 
     return layer, holdersLocalTotalArea
 

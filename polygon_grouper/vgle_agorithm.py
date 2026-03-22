@@ -230,8 +230,6 @@ class PolygonGrouper(QgsProcessingAlgorithm):
             if oneSeedBoolean:
                 swapedLayer, totalAreas = vgle_methods.closer(self, self.permanent_data['layer'], feedback, context=context)
                 swapedLayer = vgle_utils.checkVectorLayer(swapedLayer, self.backup_data['tempLayer'])
-                context.temporaryLayerStore().addMapLayer(swapedLayer)
-                self.permanent_data['swapedLayer'] = swapedLayer
                 swapedLayer, totalAreas = vgle_methods.neighbours(self, swapedLayer, feedback, totalAreas, context=context)
                 swapedLayer = vgle_utils.checkVectorLayer(swapedLayer, self.backup_data['tempLayer'])
             else:

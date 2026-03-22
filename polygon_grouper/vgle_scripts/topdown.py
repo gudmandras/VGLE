@@ -1,4 +1,4 @@
-import random, tempfile, time, os, shutil, gc
+import random, tempfile, time, os, shutil, gc, sip
 from datetime import datetime
 from pathlib import Path
 from osgeo import ogr
@@ -137,7 +137,14 @@ class TopDownAlgorithm(QgsProcessingAlgorithm):
             parameters['Preference'] = True 
         
         if parameters['Preference']:
-            self.permanent_data['selectedHoldingsIds'] = self.parameterAsVectorLayer(parameters, 'Inputlayer', context).selectedFeatureIds()
+            algParams = {
+                'INPUT': self.parameterAsVectorLayer(parameters, 'Inputlayer', context),
+                'OUTPUT': 'TEMPORARY_OUTPUT'
+            }
+            selectedPreference = processing.run("native:saveselectedfeatures", algParams, context=context, feedback=feedback, is_child_algorithm=True)
+            self.permanent_data['selectedHoldings'] = context.takeResultLayer(selectedPreference['OUTPUT'])
+            feedback.pushInfo(f"Selected features saved to temporary layer: {self.permanent_data['selectedHoldings']}")
+            self.backup_data['selectedHoldings'] = vgle_utils.extractLayerData(self.permanent_data['selectedHoldings'])     
            
         timeStamp = datetime.fromtimestamp(time.time()).strftime("%d_%m_%Y_%H_%M_%S")
         inputLayer = self.parameterAsVectorLayer(parameters, 'Inputlayer', context)
@@ -223,8 +230,7 @@ class TopDownAlgorithm(QgsProcessingAlgorithm):
         for key, group in groups.items():
             self.selectGroup(group, self.permanent_data['layer'], self.holderAttribute, context, key)
             if parameters['Preference']:
-                request = QgsFeatureRequest().setFilterFids(self.permanent_data['selectedHoldingsIds'])
-                selectedFeatures = self.parameterAsVectorLayer(parameters, 'Inputlayer', context).materialize(request)
+                selectedFeatures = vgle_utils.checkVectorLayer(self.permanent_data['selectedHoldings'] , (self.backup_data['selectedHoldings'], 'selectedHoldings'))
                 algParams = {
                     'INPUT': self.permanent_data['groupLayer'],
                     'PREDICATE': [3],
@@ -252,11 +258,11 @@ class TopDownAlgorithm(QgsProcessingAlgorithm):
                         'Stats': False
                     }, context=context, feedback=feedback, is_child_algorithm=True)
             except Exception as e:
+                feedback.pushError(f"Error processing group {key}: {e}")
                 self.permanent_data['layer'] = vgle_utils.checkVectorLayer(self.permanent_data['layer'], self.backup_data['tempLayer'])
                 self.selectGroup(group, self.permanent_data['layer'], self.holderAttribute, context, key)
                 if parameters['Preference']:
-                    request = QgsFeatureRequest().setFilterFids(self.permanent_data['selectedHoldingsIds'])
-                    selectedFeatures = self.parameterAsVectorLayer(parameters, 'Inputlayer', context).materialize(request)
+                    selectedFeatures = vgle_utils.checkVectorLayer(self.permanent_data['selectedHoldings'] , (self.backup_data['selectedHoldings'], 'selectedHoldings'))
                     algParams = {
                         'INPUT': self.permanent_data['groupLayer'],
                         'PREDICATE': [3],
