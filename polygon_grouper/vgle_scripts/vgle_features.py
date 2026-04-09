@@ -1,8 +1,10 @@
 import processing
 import math
+import sqlite3
 import statistics
 import qgis
 import qgis.core
+from collections import defaultdict
 from qgis.PyQt.QtCore import QCoreApplication, QVariant
 
 from qgis.core import (Qgis,
@@ -538,3 +540,4 @@ def holdingsClosestToSeed(self, layer, holdings, seed, seedList):
         if closestSeed == seed:
             closestHoldings.append(holding)
     return closestHoldings
+

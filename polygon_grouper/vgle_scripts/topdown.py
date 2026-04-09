@@ -321,7 +321,7 @@ class TopDownAlgorithm(QgsProcessingAlgorithm):
                 gc.collect()
             except:
                 pass
-            QgsApplication.processEvents()
+            #QgsApplication.processEvents()
         outpath_1 = os.path.join(parameters['OutputDirectory'], f'topdown_groups_{timeStamp}.gpkg')
         outpath_2 = os.path.join(parameters['OutputDirectory'], f'topdown_groups_merged_{timeStamp}.gpkg')
         

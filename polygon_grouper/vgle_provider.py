@@ -10,6 +10,7 @@ from .vgle_scripts.bottomup import BottomUpAlgorithm
 from .vgle_scripts.topdown import TopDownAlgorithm
 from .vgle_scripts.just_topdown import JustTopDownAlgorithm
 from .vgle_scripts.indices import StatAlgorithm
+from .vgle_scripts.vgle_gpkg_algorithm import PolygonGrouperGPKG
 from qgis.PyQt.QtGui import QIcon
 import os, inspect
 
@@ -33,6 +34,7 @@ class PolygonGrouperProvider(QgsProcessingProvider):
         Loads all algorithms belonging to this provider.
         """
         self.addAlgorithm(PolygonGrouper())
+        self.addAlgorithm(PolygonGrouperGPKG())
         self.addAlgorithm(BottomUpAlgorithm())
         self.addAlgorithm(TopDownAlgorithm())
         self.addAlgorithm(JustTopDownAlgorithm())

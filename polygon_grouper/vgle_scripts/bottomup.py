@@ -220,7 +220,8 @@ class BottomUpAlgorithm(QgsProcessingAlgorithm):
                 groupedLayer.triggerRepaint()
                 groupedMerged.triggerRepaint()
                 results['OUTPUT'] = groupedLayer
-            except KeyError:
+            except KeyError as e:
+                feedback.pushInfo(f'KeyError occurred: {e}')
                 feedback.pushInfo('No changes were made for the created group')
                 results['OUTPUT'] = self.permanent_data['swappedLayer']
                 results['MERGED'] = self.permanent_data['mergedLayer']

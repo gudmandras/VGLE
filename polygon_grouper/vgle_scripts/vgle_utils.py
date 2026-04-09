@@ -1,23 +1,24 @@
 import itertools
 import os
 import logging
-import processing
-import qgis
 from datetime import datetime
 import subprocess
 import pathlib as pa
 import math
-import sip
+import sqlite3
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from qgis.PyQt.QtCore import QVariant
+from qgis.PyQt import sip
 from qgis.core import (QgsApplication,
                        QgsProject,
                        QgsFeature,
                        QgsField,
                        QgsVectorLayer,
-                        QgsFeatureRequest,
-                       QgsVectorFileWriter)
+                       QgsFeatureRequest,
+                       QgsProcessingUtils,
+                       QgsVectorFileWriter,
+                       NULL)
 
 from . import vgle_layers, vgle_features
 
@@ -100,7 +101,7 @@ def calculateTotalArea(holdersWithHoldings, holdingsWithArea):
     for holder, holdings in holdersWithHoldings.items():
         totalArea = 0
         for holding in holdings:
-            if holdingsWithArea[holding] != qgis.core.NULL:
+            if holdingsWithArea[holding] != NULL:
                 totalArea += holdingsWithArea[holding]
         holderTotalArea[holder] = totalArea
     return holderTotalArea   
@@ -342,7 +343,7 @@ def calculateStatData(self, layer, fieldName):
         data = {}
         totalArea = 0
         for holding in holdings:
-            if self.holdingsWithArea[holding] != qgis.core.NULL:
+            if self.holdingsWithArea[holding] != NULL:
                 totalArea += self.holdingsWithArea[holding]
         try:
             averageDistance = vgle_features.avgDistance(self, holdings, self.seeds[holder][0], layer)  
@@ -671,8 +672,8 @@ def createExchangeLog(self, layer, actualHoldingId):
                         feature['Get from land holder ID'] = key
                         break
             else:
-                feature['Get from parcel ID'] = qgis.core.NULL
-                feature['Get from land holder ID'] = qgis.core.NULL
+                feature['Get from parcel ID'] = NULL
+                feature['Get from land holder ID'] = NULL
             if turned <= len(donated)-1:
                 feature['Transfer to parcel ID'] = donated[turned]
                 for key, value in afterHoldersWithHoldings.items():
@@ -680,8 +681,8 @@ def createExchangeLog(self, layer, actualHoldingId):
                         feature['Transfer to land holder ID'] = key
                         break
             else:
-                feature['Transfer to parcel ID'] = qgis.core.NULL
-                feature['Transfer to land holder ID'] = qgis.core.NULL
+                feature['Transfer to parcel ID'] = NULL
+                feature['Transfer to land holder ID'] = NULL
 
             if turned <= len(notChanged)-1:
                 feature['Not changed parcel ID'] = notChanged[turned]

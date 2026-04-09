@@ -14,6 +14,7 @@ from datetime import datetime
 from qgis.PyQt.QtCore import QCoreApplication
 from qgis.PyQt.QtWidgets import QDialog, QVBoxLayout, QPushButton, QWidget
 from qgis.core import (QgsProject,
+                       QgsProcessingContext,
                        QgsProcessing,
                        QgsApplication,
                        QgsProcessingAlgorithm,
@@ -24,14 +25,17 @@ from qgis.core import (QgsProject,
                        QgsProcessingParameterEnum,
                        QgsProcessingParameterField,
                        QgsProcessingParameterDefinition,
+                       QgsProcessingParameterFeatureSource,
+                       QgsProcessingParameterFile,
                        QgsProcessingParameterFolderDestination)
 
-from .vgle_scripts import vgle_utils, vgle_features, vgle_methods, vgle_layers
+from . import vgle_utils, vgle_features, vgle_methods, vgle_layers, vgle_gpkgs
 
 
-class PolygonGrouper(QgsProcessingAlgorithm):
+class PolygonGrouperGPKG(QgsProcessingAlgorithm):
 
     def initAlgorithm(self, config=None):
+        #self.addParameter(QgsProcessingParameterFile('Inputlayer', 'Input layer', behavior=QgsProcessingParameterFile.File, fileFilter='GeoPackage (*.gpkg)'))
         self.addParameter(QgsProcessingParameterVectorLayer('Inputlayer', 'Input layer',
                                                             types=[QgsProcessing.TypeVectorPolygon], defaultValue=None))
         self.addParameter(QgsProcessingParameterBoolean('Preference', 'Give preference for the selected features',
@@ -49,12 +53,13 @@ class PolygonGrouper(QgsProcessingAlgorithm):
         self.addParameter(QgsProcessingParameterNumber('DistanceThreshold', 'Distance treshold (m)',
                                                        type=QgsProcessingParameterNumber.Integer,
                                                        minValue=0, defaultValue=1000))
+        #self.addParameter(QgsProcessingParameterEnum('SwapToGet', 'Swap to get',
+        #                                             options=['Neighbours', 'Closer', 'Neighbours, then closer',
+        #                                                      'Closer, then neighbours'],
+        #                                             allowMultiple=False, defaultValue='Neighbours'))
         self.addParameter(QgsProcessingParameterEnum('SwapToGet', 'Swap to get',
-                                                     options=['Neighbours', 'Closer', 'Neighbours, then closer',
-                                                              'Closer, then neighbours'],
+                                                     options=['Neighbours'],
                                                      allowMultiple=False, defaultValue='Neighbours'))
-        self.addParameter(QgsProcessingParameterFolderDestination('OutputDirectory', 'Output directory',
-                                                                  defaultValue=None, createByDefault=True))
         self.algorithmNames = ['Neighbours', 'Closer', "Neighbours, then closer", "Closer, then neighbours"]
         
         onlySelected = QgsProcessingParameterBoolean('OnlySelected', 'Only use the selected features',
@@ -77,14 +82,12 @@ class PolygonGrouper(QgsProcessingAlgorithm):
         stats = QgsProcessingParameterBoolean('Stats', "Generate statistics", defaultValue=False)
         stats.setFlags(stats.flags() | QgsProcessingParameterDefinition.FlagAdvanced)
         self.addParameter(stats)
-        self.permanent_data = {}
-        self.backup_data = {}
 
     def name(self):
-        return 'polygon_grouper'
+        return 'polygon_grouper_gpkg'
 
     def displayName(self):
-        return 'Polygon regrouper'
+        return 'Polygon regrouper GPKG'
 
     def group(self):
         return 'vgle'
@@ -106,7 +109,7 @@ class PolygonGrouper(QgsProcessingAlgorithm):
             return f"<html><body><p>Error reading description file: {e}</p></body></html>"
 
     def createInstance(self):
-        return PolygonGrouper()
+        return PolygonGrouperGPKG()
 
     def processAlgorithm(self, parameters, context, model_feedback):
         # Use a multi-step feedback, so that individual child algorithm progress reports are adjusted for the
@@ -139,148 +142,124 @@ class PolygonGrouper(QgsProcessingAlgorithm):
         self.strictHFI = parameters['StrictHFI']
         self.stats = parameters['Stats']
 
-        source = self.parameterAsSource(parameters, 'Inputlayer', context)
-        selectedFeatures = vgle_features.getSelectedFeatures(self.parameterAsVectorLayer(parameters, 'Inputlayer', context))
-        context.temporaryLayerStore().addMapLayer(selectedFeatures)
-        self.permanent_data['selectedFeatures'] = selectedFeatures
-        self.permanent_data['source'] = source
-        if parameters['OutputDirectory'] == 'TEMPORARY_OUTPUT':
-            parameters['OutputDirectory'] = tempfile.mkdtemp()
+        filePath = self.parameterAsVectorLayer(parameters, 'Inputlayer', context).source()
+        directory = os.path.dirname(filePath)
+        parameters["OutputDirectory"] = directory
+        if filePath[-4:].lower() != 'gpkg' and os.path.splitext(filePath)[1][:5].lower() != '.gpkg':
+            feedback.reportError('The layer is not part of a GPKG')
+            return {}
        
         vgle_utils.startLogging(self.parameterAsVectorLayer(parameters, 'Inputlayer', context), parameters, timeStamp)
+
         # Create work file and get the starting dictionaries
-        tempLayer = vgle_layers.createTempLayer(self.parameterAsVectorLayer(parameters, 'Inputlayer', context), parameters["OutputDirectory"],
-                                                self.algorithmNames[self.algorithmIndex].lower(), timeStamp)
-        context.temporaryLayerStore().addMapLayer(tempLayer)
-        self.permanent_data['tempLayer'] = tempLayer  
-        self.backup_data['tempLayer'] = vgle_utils.extractLayerData(self.permanent_data['tempLayer'])
-        layer, self.holderAttribute = vgle_layers.setHolderField(self.permanent_data['tempLayer'], parameters["AssignedByField"])
-        self.permanent_data['layer'] = layer
-        self.holderAttributeType, self.holderAttributeLenght = \
-            vgle_features.getFieldProperties(self.permanent_data['tempLayer'], self.holderAttribute, self.backup_data['tempLayer'])
-        holdersWithHoldings, holdersHoldingNumber = vgle_features.getHoldersHoldings(self.permanent_data['layer'], self.holderAttribute)
-        self.permanent_data['layer'], self.idAttribute, holdersWithHoldings = vgle_layers.createIdField(self.permanent_data['layer'], holdersWithHoldings)
-        self.permanent_data['layer'].dataProvider().createSpatialIndex()
-        holdingsWithArea = vgle_features.getHoldingsAreas(self.permanent_data['layer'], parameters["BalancedByField"], self.idAttribute, self.backup_data['tempLayer'])
+        gpkg_path, tempLayerName = vgle_gpkgs.createTempLayerIntoGPKG(self.parameterAsVectorLayer(parameters, 'Inputlayer', context), self.algorithmNames[self.algorithmIndex].lower(), timeStamp, feedback)
+        self.holderAttribute = vgle_gpkgs.setHolderFieldGPKG(gpkg_path, tempLayerName, parameters["AssignedByField"])
+        self.idAttribute = vgle_gpkgs.createIdFieldGPKG(gpkg_path, tempLayerName)
+        holdersWithHoldings, holdersHoldingNumber = vgle_gpkgs.getHoldersHoldingsGPKG(gpkg_path, tempLayerName, self.holderAttribute, self.idAttribute)
+        holdingsWithArea = vgle_gpkgs.getHoldingsAreasGPKG(gpkg_path, tempLayerName, self.weight, self.idAttribute)
         self.holdersWithHoldings = holdersWithHoldings
         self.holdersHoldingNumber = holdersHoldingNumber
         self.holdingsWithArea = holdingsWithArea
         self.holdersTotalArea = vgle_utils.calculateTotalArea(self.holdersWithHoldings, self.holdingsWithArea)
 
         if parameters['Preference']:
-            self.seeds, self.selectedHolders = vgle_utils.determineSeedPolygons(self.permanent_data['layer'], self,
-                                                                                parameters['Preference'],
-                                                                                self.permanent_data['selectedFeatures'])
-            context.temporaryLayerStore().removeMapLayer(self.permanent_data['selectedFeatures'].id())
-            del self.permanent_data['selectedFeatures']
-            gc.collect()
+            selectedHoldersRowIds = vgle_gpkgs.getSelectionIdsGPKG(self.parameterAsVectorLayer(parameters, 'Inputlayer', context))
         else:
-            self.seeds, self.selectedHolders = vgle_utils.determineSeedPolygons(self.permanent_data['layer'], self)
+            selectedHoldersRowIds = None
+        self.seeds =  vgle_gpkgs.determineSeedPolygonsGPKG(self, gpkg_path, tempLayerName, selectedHoldersRowIds)
 
         feedback.pushInfo('Calculate distance matrix')
         featureThreshold = 5000
-        totalFeatures = self.permanent_data['layer'].featureCount()
+        totalFeatures = vgle_gpkgs.getFeatureCountGPKG(gpkg_path, tempLayerName)
         if totalFeatures > featureThreshold or self.simply:
             if self.simply:
-                self.distanceMatrix = vgle_utils.createDistanceMatrix(self, self.permanent_data['layer'], simply=self.simply)
-                self.filteredDistanceMatrix = self.distanceMatrix.copy()
+                distanceMatrix = vgle_gpkgs.createDistanceMatrixGPKG(self, gpkg_path, tempLayerName, context, feedback, simply=self.simply)
             else:
-                self.distanceMatrix = vgle_utils.createDistanceMatrix(self, self.permanent_data['layer'], nearestPoints=int(totalFeatures*0.1), simply=self.simply)
-                self.filteredDistanceMatrix = vgle_utils.filterDistanceMatrix(self.distance, self.distanceMatrix)
+                distanceMatrix = vgle_gpkgs.createDistanceMatrixGPKG(self, gpkg_path, tempLayerName, context, feedback, nearestPoints=int(totalFeatures*0.1), simply=self.simply)
         else:
-            self.distanceMatrix = vgle_utils.createDistanceMatrix(self, self.permanent_data['layer'])
-            self.filteredDistanceMatrix = vgle_utils.filterDistanceMatrix(self.distance, self.distanceMatrix)
+            distanceMatrix = vgle_gpkgs.createDistanceMatrixGPKG(self, gpkg_path, tempLayerName, context, feedback)
+        self.distanceMatrix = vgle_gpkgs.saveDistanceMatrix(gpkg_path, tempLayerName, distanceMatrix)
         feedback.pushInfo('Distance matrix calculated')
 
         feedback.pushInfo('Calculate total distances')
-        self.totalDistances, self.holdingWithSeedDistance = vgle_utils.calculateTotalDistances(self, self.permanent_data['layer'])
+        originalTotalDistance, self.totalDistance = vgle_gpkgs.calculateTotalDistancesGPKG(self, gpkg_path, tempLayerName)
         feedback.pushInfo('Total distances calculated')
 
         if parameters['Stats']:
-            beforeData = vgle_utils.calculateStatData(self, self.permanent_data['layer'], self.holderAttribute)
+            indicatorTable = vgle_gpkgs.createStatTableGPKG(self, gpkg_path, tempLayerName)
+            vgle_gpkgs.calculateStatDataGPKG(self, gpkg_path, tempLayerName, indicatorTable, 'BE', self.holderAttribute)
+            
             self.interactionTable = vgle_utils.createInteractionOutput(self.holdersWithHoldings)
-            copiedLayer = vgle_layers.copyLayer(self.permanent_data['layer'], f"{self.parameterAsVectorLayer(parameters, 'Inputlayer', context).name()}_before_stats_{timeStamp}")
-            mergedBELayer = vgle_layers.createMergedFile(self, copiedLayer, None)
-            mergedBEData = vgle_utils.calculateStatData(self, mergedBELayer, self.holderAttribute)
+            
+            mergedBELayer = vgle_gpkgs.createMergedFileGPKG(self, gpkg_path, tempLayerName, context, feedback)
+            _, __ = vgle_gpkgs.calculateTotalDistancesGPKG(self, gpkg_path, mergedBELayer)
+            mergedBETable = vgle_gpkgs.calculateStatDataMergedGPKG(self, gpkg_path, mergedBELayer, self.holderAttribute)
+            vgle_gpkgs.deleteTable(gpkg_path, mergedBELayer)
+            vgle_gpkgs.calculateIndexDataGPKG(gpkg_path, indicatorTable, 'BE', mergedBETable)
+            vgle_gpkgs.deleteTable(gpkg_path, mergedBETable)
 
         feedback.setCurrentStep(1)
         if feedback.isCanceled():
             vgle_utils.endLogging()
             return {}
         # Start one of the functions
+        self.turn = 0
+        self.layer = (gpkg_path, tempLayerName)
+        self.actualIdAttribute, self.actualHolderAttribute = copy.copy(self.idAttribute), copy.copy(self.holderAttribute)   
+        oneSeedBoolean = vgle_gpkgs.checkSeedNumberGPKG(self, feedback)
+        if not oneSeedBoolean:
+            vgle_utils.endLogging()
+            return {}
         if self.algorithmIndex == 0:
-            swapedLayer, totalAreas = vgle_methods.neighbours(self, self.permanent_data['layer'], feedback, context=context)
+            swapedLayer, totalAreas = vgle_gpkgs.neighboursGPKG(self, feedback, context=context)
         elif self.algorithmIndex == 1:
-            oneSeedBoolean = vgle_utils.checkSeedNumber(self.seeds, feedback)
-            if oneSeedBoolean:
-                swapedLayer, totalAreas = vgle_methods.closer(self, self.permanent_data['layer'], feedback, context=context)
-            else:
-                swapedLayer = False
+            swapedLayer, totalAreas = vgle_methods.closer(self, self.permanent_data['layer'], feedback, context=context)
         elif self.algorithmIndex == 2:
-            oneSeedBoolean = vgle_utils.checkSeedNumber(self.seeds, feedback)
-            if oneSeedBoolean:
-                originalSeeds = copy.deepcopy(self.seeds)
-                swapedLayer, totalAreas = vgle_methods.neighbours(self, self.permanent_data['layer'], feedback, context=context)
-                swapedLayer = vgle_utils.checkVectorLayer(swapedLayer, self.backup_data['tempLayer'])
-                swapedLayer, totalAreas = vgle_methods.closer(self, swapedLayer, feedback, originalSeeds, totalAreas, context=context)
-            else:
-                swapedLayer = False
+            swapedLayer, totalAreas = vgle_gpkgs.neighboursGPKG(self, feedback, context=context)
+            swapedLayer, totalAreas = vgle_methods.closer(self, feedback, totalAreas, context=context)
         elif self.algorithmIndex == 3:
-            oneSeedBoolean = vgle_utils.checkSeedNumber(self.seeds, feedback)
-            if oneSeedBoolean:
-                swapedLayer, totalAreas = vgle_methods.closer(self, self.permanent_data['layer'], feedback, context=context)
-                swapedLayer = vgle_utils.checkVectorLayer(swapedLayer, self.backup_data['tempLayer'])
-                swapedLayer, totalAreas = vgle_methods.neighbours(self, swapedLayer, feedback, totalAreas, context=context)
-                swapedLayer = vgle_utils.checkVectorLayer(swapedLayer, self.backup_data['tempLayer'])
-            else:
-                swapedLayer = False
-        #elif self.algorithmIndex == 4:
-        #    swapedLayer = vgle_methods.hybrid_method(self, layer, feedback)
-        # Save results and create merged file
+            swapedLayer, totalAreas = vgle_methods.closer(self, feedback, context=context)
+            swapedLayer, totalAreas = vgle_gpkgs.neighboursGPKG(self, feedback, totalAreas, context=context)
+
         if swapedLayer:
-            context.temporaryLayerStore().addMapLayer(swapedLayer)
             feedback.setCurrentStep(self.steps-1)
-
-            swapedLayer.commitChanges()
-            swapedLayer.removeSelection()
-            #QgsProject.instance().addMapLayer(swapedLayer, False)
-            #root = QgsProject().instance().layerTreeRoot()
-            #root.insertLayer(0, swapedLayer)
-
-            mergedLayer = vgle_layers.createMergedFile(self, swapedLayer, parameters["OutputDirectory"])
-            toDeleteAttr = [attr for attr in vgle_layers.getAttributesNames(mergedLayer)
+            mergedLayer = vgle_gpkgs.createMergedFileGPKG(self, gpkg_path, tempLayerName, context, feedback)
+            toDeleteAttr = [attr for attr in vgle_gpkgs.getFieldNamesGPKG(gpkg_path, mergedLayer)
                             if attr not in vgle_layers.getAttributesNames(self.parameterAsVectorLayer(parameters, 'Inputlayer', context))]
-            vgle_layers.cleanMergedLayer(self, toDeleteAttr, mergedLayer)
-
-            vgle_layers.copyStyle(self, self.parameterAsVectorLayer(parameters, 'Inputlayer', context), swapedLayer)
-            vgle_layers.copyStyle(self, self.parameterAsVectorLayer(parameters, 'Inputlayer', context), mergedLayer)
-            #QgsProject.instance().addMapLayer(mergedLayer, False)
-            #root = QgsProject().instance().layerTreeRoot()
-            #root.insertLayer(0, mergedLayer)
-
-            self.permanent_data['layer'].removeSelection()
+            vgle_gpkgs.deleteField(gpkg_path, mergedLayer, toDeleteAttr)
 
             if parameters['Stats']:
-                swapedLayer = vgle_utils.checkVectorLayer(swapedLayer, self.backup_data['tempLayer'])
-                lastHolderAttribute = int(self.actualHolderAttribute.split('_')[0])
-                if lastHolderAttribute >= 10:
-                    attributeName = str(lastHolderAttribute) + self.actualHolderAttribute[2:]
-                else:
-                    attributeName = str(lastHolderAttribute) + self.actualHolderAttribute[1:]
-                afterData = vgle_utils.calculateStatData(self, swapedLayer, attributeName)
-                mergedData = vgle_utils.calculateStatData(self, mergedLayer, attributeName)
-                try:
-                    vgle_utils.saveInteractionOutput2(self, swapedLayer, attributeName)
-                    vgle_utils.createIndicesStat(self, beforeData, mergedBEData, afterData, mergedData)
-                    vgle_utils.createExchangeLog(self, swapedLayer, attributeName)
-                    vgle_utils.saveInteractionOutput(self)
-                except Exception as e:
-                    feedback.pushInfo(f"No statistics generation due to no changes made: {e}")
-                # self.saveInteractionOutputGOPA(self, os.path.join(parameters["OutputDirectory"],
-                # f"{str(swapedLayer.source()[:-4])}_interactions.csv"), swapedLayer, attributeName)
-                # self.calculateShapeIndexes(self, swapedLayer, mergedLayer)
+                vgle_gpkgs.saveInteractionOutput1GPKG(self, self.algorithmNames[self.algorithmIndex].lower(), timeStamp)
+                vgle_gpkgs.saveInteractionOutput2GPKG(self, self.algorithmNames[self.algorithmIndex].lower(), timeStamp)
+                vgle_utils.createExchangeLog(self, self.algorithmNames[self.algorithmIndex].lower(), timeStamp)
+                
 
-            swapedLayer.commitChanges()
+                vgle_gpkgs.calculateStatDataGPKG(self, gpkg_path, tempLayerName, indicatorTable, 'AE', self.actualHolderAttribute)
+                _, __ = vgle_gpkgs.calculateTotalDistancesGPKG(self, gpkg_path, mergedLayer)
+                mergedAETable = vgle_gpkgs.calculateStatDataMergedGPKG(self, gpkg_path, mergedLayer, self.actualHolderAttribute)
+                vgle_gpkgs.calculateIndexDataGPKG(gpkg_path, indicatorTable, 'CH', mergedAETable)
+                vgle_gpkgs.deleteTable(gpkg_path, mergedAETable)
+
+            #gpkg_path, layer_name = self.layer
+            #cleaned_name = layer_name.replace('"', '').replace("'", '').strip()
+            #uri = f'{gpkg_path}|layername={cleaned_name}'
+            #feedback.pushInfo(f"URI: {uri}")
+            #context.addLayerToLoadOnCompletion(
+            #    uri,
+            #    QgsProcessingContext.LayerDetails(layer_name, context.project())
+            #)
+
+            #mergedLayer = layer_name.replace('"', '').replace("'", '').strip()
+            #uri = f'{gpkg_path}|layername={cleaned_name}'
+            #feedback.pushInfo(f"URI: {uri}")
+            #context.addLayerToLoadOnCompletion(
+            #    uri,
+            #    QgsProcessingContext.LayerDetails(mergedLayer, context.project())
+            #)
+
+                
+            #vgle_layers.copyStyle(self, self.parameterAsVectorLayer(parameters, 'Inputlayer', context), swapedLayer)
+            #vgle_layers.copyStyle(self, self.parameterAsVectorLayer(parameters, 'Inputlayer', context), mergedLayer)
 
             mainEndTime = time.time()
             logging.debug(f'Script time:{mainEndTime-mainStartTime}')
@@ -293,7 +272,9 @@ class PolygonGrouper(QgsProcessingAlgorithm):
         else:
             if self.strictHDI or self.strictHFI:
                 feedback.pushInfo('No change was made, probably due to the too strict conditions (HDI or HFI)! Try to disable these parameters and run again.') 
-            else:
+            elif self.counter == 0:
                 feedback.pushInfo('No change was made! Try to modify the parameters and run again.') 
+            else:
+                feedback.reportError('Something went wrong, no change was made! See log for more details.')
             vgle_utils.endLogging()   
             return {}

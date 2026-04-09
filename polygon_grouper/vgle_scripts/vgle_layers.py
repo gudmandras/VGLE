@@ -3,12 +3,15 @@ import uuid
 import tempfile
 import qgis
 import processing
+import sqlite3
+import re
 
 from qgis.PyQt.QtCore import QVariant
 from PyQt5.QtCore import QCoreApplication
 from qgis.core import (QgsVectorFileWriter,
                        QgsVectorLayer,
                        QgsProject,
+                       QgsProcessingUtils,
                        QgsField)
 from . import vgle_utils
 
@@ -45,7 +48,6 @@ def createTempLayer(layer, directory, postfix, timeStamp=None):
         memoryLayerData.addFeatures(feats)
         memoryLayer.commitChanges()
         return memoryLayer
-
 
 def setHolderField(layer, field):
     """
@@ -468,6 +470,7 @@ def copyLayer(layer, new_name):
     copyLayer = layer.clone()
     copyLayer.setName(new_name)
     return copyLayer
+
 
 """    
 def copyStyle(self, templateLayer, targetLayer):
