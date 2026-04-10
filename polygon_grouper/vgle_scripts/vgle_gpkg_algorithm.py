@@ -82,6 +82,7 @@ class PolygonGrouperGPKG(QgsProcessingAlgorithm):
         stats = QgsProcessingParameterBoolean('Stats', "Generate statistics", defaultValue=False)
         stats.setFlags(stats.flags() | QgsProcessingParameterDefinition.FlagAdvanced)
         self.addParameter(stats)
+        self.version = '2026-04-10-01'
 
     def name(self):
         return 'polygon_grouper_gpkg'
@@ -120,6 +121,7 @@ class PolygonGrouperGPKG(QgsProcessingAlgorithm):
         results = {}
         self.steps = vgle_utils.calculateSteps(parameters['SwapToGet'])
         feedback = QgsProcessingMultiStepFeedback(self.steps, model_feedback)
+        feedback.pushWarning(f"Plugin version: {self.version}\n")
 
         if parameters['OnlySelected'] and parameters['Preference'] is not True:
             feedback.reportError(f"'Only use the selected features' parameters works only with "
@@ -149,7 +151,7 @@ class PolygonGrouperGPKG(QgsProcessingAlgorithm):
             feedback.reportError('The layer is not part of a GPKG')
             return {}
        
-        vgle_utils.startLogging(self.parameterAsVectorLayer(parameters, 'Inputlayer', context), parameters, timeStamp)
+        vgle_utils.startLogging(self.parameterAsVectorLayer(parameters, 'Inputlayer', context), parameters, timeStamp, self.version)
 
         # Create work file and get the starting dictionaries
         gpkg_path, tempLayerName = vgle_gpkgs.createTempLayerIntoGPKG(self.parameterAsVectorLayer(parameters, 'Inputlayer', context), self.algorithmNames[self.algorithmIndex].lower(), timeStamp, feedback)
@@ -179,6 +181,7 @@ class PolygonGrouperGPKG(QgsProcessingAlgorithm):
         else:
             distanceMatrix = vgle_gpkgs.createDistanceMatrixGPKG(self, gpkg_path, tempLayerName, context, feedback)
         self.distanceMatrix = vgle_gpkgs.saveDistanceMatrix(gpkg_path, tempLayerName, distanceMatrix)
+        #self.filteredDistanceMatrix = vgle_utils.filterDistanceMatrix(gpkg_path, self.distanceMatrix, self.distance)
         feedback.pushInfo('Distance matrix calculated')
 
         feedback.pushInfo('Calculate total distances')

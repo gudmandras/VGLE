@@ -23,7 +23,7 @@ from qgis.core import (QgsApplication,
 from . import vgle_layers, vgle_features
 
 
-def startLogging(layer, parameters, timeStamp):
+def startLogging(layer, parameters, timeStamp, version='2026-04-10'):
     """
     DESCRIPTION: Function to start the logging to a log file
     INPUTS:
@@ -44,7 +44,8 @@ def startLogging(layer, parameters, timeStamp):
                   f'Tolerance threshold: {parameters["Tolerance"]}\n'
                   f'Distance threshold: {parameters["DistanceThreshold"]}\n'
                   f'Simplified run: {parameters["Simply"]}\n'
-                  f'Output dir: {parameters["OutputDirectory"]}')
+                  f'Output dir: {parameters["OutputDirectory"]}\n'
+                  f'Plugin version: {version}')
 
 def endLogging():
     """
