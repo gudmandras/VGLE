@@ -78,7 +78,7 @@ class PolygonGrouperGPKG(QgsProcessingAlgorithm):
         stats = QgsProcessingParameterBoolean('Stats', "Generate statistics", defaultValue=False)
         stats.setFlags(stats.flags() | QgsProcessingParameterDefinition.FlagAdvanced)
         self.addParameter(stats)
-        self.version = '2026-04-10-02'
+        self.version = '2026-04-15-01'
 
     def name(self):
         return 'polygon_grouper_gpkg'
