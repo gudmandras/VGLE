@@ -53,10 +53,10 @@ class PolygonGrouperGPKG(QgsProcessingAlgorithm):
         self.addParameter(QgsProcessingParameterNumber('DistanceThreshold', 'Distance treshold (m)',
                                                        type=QgsProcessingParameterNumber.Integer,
                                                        minValue=0, defaultValue=1000))
-        #self.addParameter(QgsProcessingParameterEnum('SwapToGet', 'Swap to get',
-        #                                             options=['Neighbours', 'Closer', 'Neighbours, then closer',
-        #                                                      'Closer, then neighbours'],
-        #                                             allowMultiple=False, defaultValue='Neighbours'))
+        self.addParameter(QgsProcessingParameterEnum('SwapToGet', 'Swap to get',
+                                                     options=['Neighbours', 'Closer', 'Neighbours, then closer',
+                                                              'Closer, then neighbours'],
+                                                     allowMultiple=False, defaultValue='Neighbours'))
         self.addParameter(QgsProcessingParameterEnum('SwapToGet', 'Swap to get',
                                                      options=['Neighbours'],
                                                      allowMultiple=False, defaultValue='Neighbours'))
@@ -75,14 +75,10 @@ class PolygonGrouperGPKG(QgsProcessingAlgorithm):
         strict2 = QgsProcessingParameterBoolean('StrictHFI', "Strict condition on Holding Fragmentation Indicator (HFI)", defaultValue=False)
         strict2.setFlags(strict2.flags() | QgsProcessingParameterDefinition.FlagAdvanced)
         self.addParameter(strict2)
-        simplfy = QgsProcessingParameterBoolean('Simply', "Simply algorithm to process big dataset",
-                                                defaultValue=False)
-        simplfy.setFlags(simplfy.flags() | QgsProcessingParameterDefinition.FlagAdvanced)
-        self.addParameter(simplfy)
         stats = QgsProcessingParameterBoolean('Stats', "Generate statistics", defaultValue=False)
         stats.setFlags(stats.flags() | QgsProcessingParameterDefinition.FlagAdvanced)
         self.addParameter(stats)
-        self.version = '2026-04-12-01'
+        self.version = '2026-04-10-02'
 
     def name(self):
         return 'polygon_grouper_gpkg'
@@ -139,10 +135,11 @@ class PolygonGrouperGPKG(QgsProcessingAlgorithm):
         self.useSingle = parameters['Single']
         self.onlySelected = parameters['OnlySelected']
         self.algorithmIndex = parameters['SwapToGet']
-        self.simply = parameters['Simply']
         self.strictHDI = parameters['StrictHDI']
         self.strictHFI = parameters['StrictHFI']
         self.stats = parameters['Stats']
+        parameters['Simply'] = True
+        self.simply = parameters['Simply']
 
         filePath = self.parameterAsVectorLayer(parameters, 'Inputlayer', context).source()
         directory = os.path.dirname(filePath)
@@ -154,7 +151,7 @@ class PolygonGrouperGPKG(QgsProcessingAlgorithm):
         vgle_utils.startLogging(self.parameterAsVectorLayer(parameters, 'Inputlayer', context), parameters, timeStamp, self.version)
 
         # Create work file and get the starting dictionaries
-        gpkg_path, tempLayerName = vgle_gpkgs.createTempLayerIntoGPKG(self.parameterAsVectorLayer(parameters, 'Inputlayer', context), self.algorithmNames[self.algorithmIndex].lower(), timeStamp, feedback)
+        gpkg_path, tempLayerName = vgle_gpkgs.createTempLayerIntoGPKG(self.parameterAsVectorLayer(parameters, 'Inputlayer', context), self.algorithmNames[self.algorithmIndex].lower().replace(" ", "_").replace(",", "_"), timeStamp, feedback)
         if not gpkg_path or not tempLayerName:
             feedback.reportError('Failed to create temporary layer in GPKG. Check the log for more details.')
             vgle_utils.endLogging()
@@ -185,8 +182,9 @@ class PolygonGrouperGPKG(QgsProcessingAlgorithm):
                 distanceMatrix = vgle_gpkgs.createDistanceMatrixGPKG(self, gpkg_path, tempLayerName, context, feedback, nearestPoints=int(totalFeatures*0.1), simply=self.simply)
         else:
             distanceMatrix = vgle_gpkgs.createDistanceMatrixGPKG(self, gpkg_path, tempLayerName, context, feedback)
-        self.distanceMatrix = vgle_gpkgs.saveDistanceMatrix(gpkg_path, tempLayerName, distanceMatrix)
-        self.filteredDistanceMatrix = vgle_gpkgs.filterDistanceMatrix(gpkg_path, self.distanceMatrix, self.distance)
+        self.distanceMatrix = distanceMatrix
+        self.distanceMatrixTable = vgle_gpkgs.saveDistanceMatrix(gpkg_path, tempLayerName, distanceMatrix)
+        self.filteredDistanceMatrix = vgle_gpkgs.filterDistanceMatrix(gpkg_path, self.distanceMatrixTable, self.distance)
         feedback.pushInfo('Distance matrix calculated')
 
         feedback.pushInfo('Calculate total distances')
@@ -237,9 +235,9 @@ class PolygonGrouperGPKG(QgsProcessingAlgorithm):
             vgle_gpkgs.deleteField(gpkg_path, mergedLayer, toDeleteAttr)
 
             if parameters['Stats']:
-                vgle_gpkgs.saveInteractionOutput1GPKG(self, self.algorithmNames[self.algorithmIndex].lower(), timeStamp)
-                vgle_gpkgs.saveInteractionOutput2GPKG(self, self.algorithmNames[self.algorithmIndex].lower(), timeStamp)
-                vgle_utils.createExchangeLog(self, self.algorithmNames[self.algorithmIndex].lower(), timeStamp)
+                vgle_gpkgs.saveInteractionOutput1GPKG(self, self.algorithmNames[self.algorithmIndex].lower().replace(" ", "_").replace(",", "_"), timeStamp)
+                vgle_gpkgs.saveInteractionOutput2GPKG(self, self.algorithmNames[self.algorithmIndex].lower().replace(" ", "_").replace(",", "_"), timeStamp)
+                vgle_utils.createExchangeLog(self, self.algorithmNames[self.algorithmIndex].lower().replace(" ", "_").replace(",", "_"), timeStamp)
                 
 
                 vgle_gpkgs.calculateStatDataGPKG(self, gpkg_path, tempLayerName, indicatorTable, 'AE', self.actualHolderAttribute)

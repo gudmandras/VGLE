@@ -8,6 +8,7 @@ import logging
 import sqlite3
 import re
 import math
+import time
 from collections import defaultdict
 
 from qgis.PyQt.QtCore import QVariant
@@ -22,8 +23,15 @@ from qgis.core import (QgsVectorFileWriter,
                        QgsProcessingOutputLayerDefinition)
 from . import vgle_layers, vgle_utils
 
-MAXCOMBTURN = 2000
+MAXCOMBTURN = 1000
+MAXCANDIDATES = 5
 
+def connectToDB(gpkg_path):
+    conn = sqlite3.connect(gpkg_path)
+    conn.execute("PRAGMA journal_mode=WAL;")
+    conn.execute("PRAGMA synchronous = NORMAL;")
+    conn.execute("PRAGMA cache_size = 1000000;")
+    return conn
 
 def createTempLayerIntoGPKG(layer, postfix, timeStamp, feedback):
     #import ptvsd
@@ -149,11 +157,29 @@ def setHolderFieldGPKG(gpkg_path, layer_name, attributes, holder_field='holder_i
                 f')'
         cur.execute(set_expr)
 
+        cur.execute(f'''
+            CREATE INDEX IF NOT EXISTS idx_{layer_name}_{holder_field}
+            ON "{layer_name}" ("{holder_field}")
+        ''')
+
         conn.commit()
         conn.close()
 
         return holder_field
     else:
+        conn = sqlite3.connect(gpkg_path)
+        cur = conn.cursor()
+
+        print(f'SQL: CREATE INDEX IF NOT EXISTS idx_{layer_name}_{attributes[0]} ON "{layer_name}" ("{attributes[0]}"')
+
+        cur.execute(f'''
+            CREATE INDEX IF NOT EXISTS idx_{layer_name}_{attributes[0]}
+            ON "{layer_name}" ("{attributes[0]}")
+        ''')
+
+        conn.commit()
+        conn.close()
+
         return attributes[0]
 
 def createIdFieldGPKG(gpkg_path, layer_name):
@@ -178,6 +204,11 @@ def createIdFieldGPKG(gpkg_path, layer_name):
         f'UPDATE "{layer_name}" SET "{new_field}"=? WHERE rowid=?',
         zip(uuid_list, rowids)
     )
+
+    cur.execute(f'''
+        CREATE INDEX IF NOT EXISTS idx_{layer_name}_{new_field}
+        ON "{layer_name}" ("{new_field}")
+    ''')
 
     conn.commit()
     conn.close()
@@ -221,6 +252,21 @@ def saveDistanceMatrix(gpkg_path, layer_name, matrix):
         f'INSERT INTO "{target_layer_name}" (input_id, target_id, distance) VALUES (?, ?, ?)',
         rows
     )
+
+    cur.execute(f'''
+        CREATE INDEX IF NOT EXISTS idx_{layer_name}_input_id
+        ON "{layer_name}" ("input_id")
+    ''')
+
+    cur.execute(f'''
+        CREATE INDEX IF NOT EXISTS idx_{layer_name}_target_id
+        ON "{layer_name}" ("target_id")
+    ''')
+
+    cur.execute(f'''
+        CREATE INDEX IF NOT EXISTS idx_{layer_name}_distance
+        ON "{layer_name}" ("distance")
+    ''')
 
     conn.commit()
     conn.close()
@@ -413,23 +459,26 @@ def deleteField(gpkg_path, layer_name, field_names):
     for (trg,) in cur.fetchall():
         cur.execute(f'DROP TRIGGER IF EXISTS "{trg}"')
 
-    try:
-        cur.execute("""
-            SELECT name FROM sqlite_master
-            WHERE name LIKE ?
-        """, (f'rtree_{layer_name}_%',))
+    cur.execute("""
+        SELECT name FROM sqlite_master
+        WHERE name LIKE ?
+    """, (f'rtree_{layer_name}_%',))
 
-        for (t,) in cur.fetchall():
+    for (t,) in cur.fetchall():
+        try:
             cur.execute(f'DROP TABLE IF EXISTS "{t}"')
-    except:
-        pass
+        except sqlite3.OperationalError:
+            pass
 
     cur.execute(f'PRAGMA table_info("{layer_name}")')
     columns = [col[1] for col in cur.fetchall()]
 
     for field_name in field_names:
         if field_name in columns:
-            cur.execute(f'ALTER TABLE "{layer_name}" DROP COLUMN {field_name}')
+            try:
+                cur.execute(f'ALTER TABLE "{layer_name}" DROP COLUMN {field_name}')
+            except sqlite3.OperationalError:
+                pass
 
     conn.commit()
     conn.close()
@@ -620,8 +669,17 @@ def determineSeedPolygonsGPKG(self, gpkg_path, layer_name, selectedFeatures=None
         FROM "{layer_name}"
         WHERE seed_flag = 1
     """)
+
+    cur.execute(f'''
+        CREATE INDEX IF NOT EXISTS idx_{layer_name}_seed_flag
+        ON "{layer_name}" ("seed_flag")
+    ''')
+
+
     for holder, holding_id in cur.fetchall():
         holdersWithSeeds.setdefault(holder, []).append(holding_id)
+
+    
 
     conn.close()
     return 'seed_flag'
@@ -743,7 +801,7 @@ def calculateTotalDistancesGPKG(self, gpkg_path, layer_name):
             FROM "{layer_name}" AS seed
             JOIN "{layer_name}" AS h
                 ON h.{self.holderAttribute} = seed.{self.holderAttribute}
-            LEFT JOIN "{self.distanceMatrix}" d
+            LEFT JOIN "{self.distanceMatrixTable}" d
                 ON d.input_id = seed.{self.idAttribute}
             AND d.target_id = h.{self.idAttribute}
             WHERE seed.seed_flag = 1
@@ -925,10 +983,14 @@ def getChangableHoldingsGPKG(self, inDistance=None):
     conn.close()
     return changableHoldings
 
-def setTurnAttributesGPKG(self):
+def setTurnAttributesGPKG(self, connection=False):
     gpkg_path, layer_name = self.layer
-    conn = sqlite3.connect(gpkg_path)
-    cur = conn.cursor()
+    if not connection:
+        conn = sqlite3.connect(gpkg_path)
+        cur = conn.cursor()
+    else:
+        conn = connection
+        cur = conn.cursor()
     newId = f"id_{self.turn}"
     newHolder = f"holder_{self.turn}"
 
@@ -940,8 +1002,9 @@ def setTurnAttributesGPKG(self):
 
     cur.execute(f'UPDATE "{layer_name}" SET {newHolder} = {self.actualHolderAttribute}')
 
-    conn.commit()    
-    conn.close()
+    conn.commit()   
+    if not connection:
+        conn.close()
 
     return newId, newHolder
 
@@ -1006,10 +1069,14 @@ def calculateNeighboursGPKG(self, feedback, context=None):
 
     return table_name
 
-def querySeeds(self, holder):
+def querySeeds(self, holder, connection=False):
     gpkg_path, layer_name = self.layer
-    conn = sqlite3.connect(gpkg_path)
-    cur = conn.cursor()
+    if not connection:
+        conn = sqlite3.connect(gpkg_path)
+        cur = conn.cursor()
+    else:
+        conn = connection
+        cur = conn.cursor()
 
     cur.execute(f"""
         SELECT {self.idAttribute}
@@ -1019,13 +1086,18 @@ def querySeeds(self, holder):
     """, (holder,))
     seeds = [row[0] for row in cur.fetchall()]
 
-    conn.close()
+    if not connection:
+        conn.close()
     return seeds
 
-def queryNeighbours(self, holder, seed, neighbours_table):
+def queryNeighbours(self, holder, seed, neighbours_table, connection=False):
     gpkg_path, layer_name = self.layer
-    conn = sqlite3.connect(gpkg_path)
-    cur = conn.cursor()
+    if not connection:
+        conn = sqlite3.connect(gpkg_path)
+        cur = conn.cursor()
+    else:
+        conn = connection
+        cur = conn.cursor()
 
     cur.execute(f"""
         SELECT n.target_id
@@ -1038,13 +1110,18 @@ def queryNeighbours(self, holder, seed, neighbours_table):
 
     neighboursIds = [row[0] for row in cur.fetchall()]
 
-    conn.close()
+    if not connection:
+        conn.close()
     return neighboursIds
 
-def queryAllHolderItem(self, holder):
+def queryAllHolderItem(self, holder, connection=False):
     gpkg_path, layer_name = self.layer
-    conn = sqlite3.connect(gpkg_path)
-    cur = conn.cursor()
+    if not connection:
+        conn = sqlite3.connect(gpkg_path)
+        cur = conn.cursor()
+    else:
+        conn = connection
+        cur = conn.cursor()
 
     cur.execute(f"""
         SELECT {self.idAttribute}
@@ -1054,7 +1131,8 @@ def queryAllHolderItem(self, holder):
 
     allItems = [row[0] for row in cur.fetchall()]
 
-    conn.close()
+    if not connection:
+        conn.close()
     return allItems
 
 def queryChangableItems(self, holder, seed):
@@ -1065,7 +1143,7 @@ def queryChangableItems(self, holder, seed):
     cur.execute(f"""
         SELECT l.{self.idAttribute}
         FROM "{layer_name}" l
-        JOIN "{self.distanceMatrix}" d
+        JOIN "{self.distanceMatrixTable}" d
             ON d.target_id = l.{self.idAttribute}
         WHERE
             d.input_id = ?
@@ -1080,10 +1158,38 @@ def queryChangableItems(self, holder, seed):
     conn.close()
     return changables
 
-def queryHolder(self, holdingId):
+def queryChangableItemsWithoutDistance(self, holder, connection=False):
     gpkg_path, layer_name = self.layer
-    conn = sqlite3.connect(gpkg_path)
-    cur = conn.cursor()
+    if not connection:
+        conn = sqlite3.connect(gpkg_path)
+        cur = conn.cursor()
+    else:
+        conn = connection
+        cur = conn.cursor()
+
+    cur.execute(f"""
+        SELECT l.{self.idAttribute}
+        FROM "{layer_name}" l
+        WHERE
+            l.{self.actualHolderAttribute} = ?
+            AND l.seed_flag = 0
+            AND l.{self.actualIdAttribute} IS NULL
+    """, (holder,))
+
+    changables = [row[0] for row in cur.fetchall()]
+
+    if not connection:
+        conn.close()
+    return changables
+
+def queryHolder(self, holdingId, connection=False):
+    gpkg_path, layer_name = self.layer
+    if not connection:
+        conn = sqlite3.connect(gpkg_path)
+        cur = conn.cursor()
+    else:
+        conn = connection
+        cur = conn.cursor()
 
     cur.execute(f"""
         SELECT {self.actualHolderAttribute}
@@ -1093,7 +1199,8 @@ def queryHolder(self, holdingId):
 
     holder = cur.fetchone()[0]
 
-    conn.close()
+    if not connection:
+        conn.close()
     return holder
 
 def queryMaxDistance(self, seed, combination):
@@ -1109,7 +1216,7 @@ def queryMaxDistance(self, seed, combination):
 
     cur.execute(f"""
         SELECT COALESCE(MAX(distance), 0)
-        FROM "{self.distanceMatrix}"
+        FROM "{self.distanceMatrixTable}"
         WHERE input_id = ? {queryPart}
     """, params)
 
@@ -1126,7 +1233,7 @@ def queryTotalDistance(self, seed, combination):
     cur.execute(f"""
         SELECT
             COALESCE(SUM(distance), 0)
-        FROM "{self.distanceMatrix}"
+        FROM "{self.distanceMatrixTable}"
         WHERE input_id = ?
         AND target_id IN ({placeholders})
     """, (seed, *combination))
@@ -1150,10 +1257,14 @@ def queryHoldings(self, holder):
     conn.close()
     return holdings
 
-def setAttributeValuesGPKG(self, holder, neighbourHolder, holderCombinationForChange, neighbourCombinationForChange):
+def setAttributeValuesGPKG(self, holder, neighbourHolder, holderCombinationForChange, neighbourCombinationForChange, connection=False):
     gpkg_path, layer_name = self.layer
-    conn = sqlite3.connect(gpkg_path)
-    cur = conn.cursor()
+    if not connection:
+        conn = sqlite3.connect(gpkg_path)
+        cur = conn.cursor()
+    else:
+        conn = connection
+        cur = conn.cursor()
 
     placeholdersHolder = ",".join("?" for _ in holderCombinationForChange)
     placeholdersNeighbour = ",".join("?" for _ in neighbourCombinationForChange)
@@ -1188,7 +1299,8 @@ def setAttributeValuesGPKG(self, holder, neighbourHolder, holderCombinationForCh
     """, (placeholdersHolderValue , *neighbourCombinationForChange))
 
     conn.commit()
-    conn.close()
+    if not connection:
+        conn.close()
 
 def queryDistance(self, seed, holdingId):
     gpkg_path, layer_name = self.layer
@@ -1197,16 +1309,19 @@ def queryDistance(self, seed, holdingId):
 
     cur.execute(f"""
         SELECT distance
-        FROM "{self.distanceMatrix}"
+        FROM "{self.distanceMatrixTable}"
         WHERE input_id = ? AND target_id = ?
     """, (seed, holdingId))
 
     result = cur.fetchone()
     return result[0]
 
-def update_distancesGPKG(self):
+def update_distancesGPKG(self, connection=False):
     gpkg_path, layer_name = self.layer
-    conn = sqlite3.connect(gpkg_path)
+    if not connection:
+        conn = sqlite3.connect(gpkg_path)
+    else:
+        conn = connection
     conn.enable_load_extension(True)
     try:
         conn.load_extension("mod_spatialite")
@@ -1214,7 +1329,7 @@ def update_distancesGPKG(self):
         pass
     cur = conn.cursor()
 
-     # update distances
+    # update distances
     cur.execute(
         f"""
         UPDATE "{layer_name}" AS v
@@ -1223,7 +1338,7 @@ def update_distancesGPKG(self):
             FROM "{layer_name}" AS seed
             JOIN "{layer_name}" AS h
                 ON h.{self.actualHolderAttribute} = seed.{self.actualHolderAttribute}
-            LEFT JOIN "{self.distanceMatrix}" d
+            LEFT JOIN "{self.distanceMatrixTable}" d
                 ON d.input_id = seed.{self.idAttribute}
             AND d.target_id = h.{self.idAttribute}
             WHERE seed.seed_flag = 1
@@ -1233,11 +1348,15 @@ def update_distancesGPKG(self):
     )
 
     conn.commit()
-    conn.close()
+    if not connection:
+        conn.close()
 
-def update_seedsGPKG(self, holdingId):
+def update_seedsGPKG(self, holdingId, connection=False):
     gpkg_path, layer_name = self.layer
-    conn = sqlite3.connect(gpkg_path)
+    if not connection:
+        conn = sqlite3.connect(gpkg_path)
+    else:
+        conn = connection
     cur = conn.cursor()
 
     cur.execute(f"""
@@ -1247,7 +1366,8 @@ def update_seedsGPKG(self, holdingId):
     """, (holdingId,))
 
     conn.commit()
-    conn.close()
+    if not connection:
+        conn.close()
 
 def update_holdersHoldingsNumberGPKG(self, holder, targetHolder, holderCombinationForChange, targetCombinationForChange):
     self.holdersHoldingNumber[holder] += len(targetCombinationForChange) - len(holderCombinationForChange)
@@ -1462,6 +1582,48 @@ def createExchangeLog(self, postfix, timeStamp):
     conn.commit()
     conn.close()
 
+def maxDistance(self, seed, featureIds):
+    """
+    DESCRIPTION: Calculate maximum distance of a list of holding and the seed polygon
+    INPUTS:
+            featureIds: List, holding ids
+            seed: String, holding id
+            layer: QgsVectorLayer, optional
+    OUTPUTS: Numeric
+    """
+    maxDistance = 0
+    for featureId in featureIds:
+        try:
+            distance = self.distanceMatrix[seed][featureId]
+            if distance > maxDistance:
+                maxDistance = distance
+        except KeyError:
+            distance = queryDistance(self, seed, featureId)
+            if distance > maxDistance:
+                maxDistance = distance
+    return maxDistance
+
+def avgDistance(self, seed, featureIds):
+    """
+    DESCRIPTION: Calculate average distance of a list of holding and the seed polygon
+    INPUTS:
+            featureIds: List, holding ids
+            seed: String, holding id
+            layer: QgsVectorLayer, optional
+    OUTPUTS: Numeric
+    """
+    sumDistance = 0
+    divider = 0
+    for featureId in featureIds:
+        divider += 1
+        try:
+            distance = self.distanceMatrix[seed][featureId]
+            sumDistance += distance
+        except KeyError:
+            distance = queryDistance(self, seed, featureId)
+            sumDistance += distance
+    return sumDistance / divider
+
 
 def neighboursGPKG(self, feedback, totalAreas=None, context=None):
     maxTurn = 10
@@ -1481,13 +1643,15 @@ def neighboursGPKG(self, feedback, totalAreas=None, context=None):
     while changer:
         self.turn += 1
         maxTurn -= 1
-        self.actualIdAttribute, self.actualHolderAttribute = setTurnAttributesGPKG(self)
+        changedOnce = []
+        connection = connectToDB(self.layer[0])
+        self.actualIdAttribute, self.actualHolderAttribute = setTurnAttributesGPKG(self, connection)
         feedback.pushInfo(f'Round {self.turn}')
         for holder in self.holdersWithHoldings.keys():
             if holder == 'NULL':
                 continue
 
-            seeds = querySeeds(self, holder)
+            seeds = querySeeds(self, holder, connection)
 
             #feedback.pushInfo(f'Holder {holder} - Seeds: {seeds}')
             
@@ -1495,17 +1659,19 @@ def neighboursGPKG(self, feedback, totalAreas=None, context=None):
                 continue
 
             for seed in seeds:
-                neighboursIds = queryNeighbours(self, holder, seed, neighbours)
+                neighboursIds = queryNeighbours(self, holder, seed, neighbours, connection)
+                targetHoldings = list(self.filteredDistanceMatrix[seed].keys())
 
                 #feedback.pushInfo(f'Holder {holder} - Seeds: {seeds} - Neighbours: {neighboursIds}')
 
                 for nghID in neighboursIds:
                     holderTotalArea = holdersLocalTotalArea[holder]
-                    holderChangables = queryChangableItems(self, holder, seed)
+                    holderChangables = queryChangableItemsWithoutDistance(self, holder, connection)
+                    holderChangables = [holding for holding in holderChangables if holding in targetHoldings and holding not in changedOnce]
                     if self.strictHDI:
-                        holderAllItems = [item for item in queryAllHolderItem(self, holder) if item != seed]
-                        holderMaxDistance = queryMaxDistance(self, seed, holderAllItems)
-                        holderAvgDistance = queryTotalDistance(self, seed, holderAllItems)/len(holderAllItems)
+                        holderAllItems = [item for item in queryAllHolderItem(self, holder, connection) if item != seed]
+                        holderMaxDistance = maxDistance(self, seed, holderAllItems)
+                        holderAvgDistance = avgDistance(self, seed, holderAllItems)
 
                     #feedback.pushInfo(f'HolderChangables for holder {holder} and seed {seed}: {len(holderChangables)}')
 
@@ -1516,7 +1682,7 @@ def neighboursGPKG(self, feedback, totalAreas=None, context=None):
                     neighbourHolder = queryHolder(self, nghID)
                     if neighbourHolder != 'NULL' and neighbourHolder != holder:
                         try:
-                            neighbourHolderSeed = querySeeds(self, neighbourHolder)[0]
+                            neighbourHolderSeed = querySeeds(self, neighbourHolder, connection)[0]
                         except IndexError:
                             if self.useSingle:
                                 neighbourHolderSeed = False
@@ -1525,15 +1691,17 @@ def neighboursGPKG(self, feedback, totalAreas=None, context=None):
                     # Get holder total area
                     neighbourHolderTotalArea = holdersLocalTotalArea[neighbourHolder]
                     # Get holders holdings
-                    neighbourChangables = queryChangableItems(self, neighbourHolder, seed)
+                    neighbourChangables = queryChangableItemsWithoutDistance(self, neighbourHolder, connection)
+                    neighbourChangables = [holding for holding in neighbourChangables if holding in targetHoldings and holding not in changedOnce]
+
                     #feedback.pushInfo(f'NeighbourChangables for neighbour holder {neighbourHolder} and seed {neighbourHolderSeed}: {len(neighbourChangables)}')
                     if not neighbourChangables:
                         continue
 
                     if self.strictHDI:
-                        targetAllItems = [item for item in queryAllHolderItem(self, neighbourHolder) if item != neighbourHolderSeed]
-                        targetMaxDistance = queryMaxDistance(self, neighbourHolderSeed, targetAllItems)
-                        targetAvgDistance = queryTotalDistance(self, neighbourHolderSeed, targetAllItems)/len(targetAllItems)
+                        targetAllItems = [item for item in queryAllHolderItem(self, neighbourHolder, connection) if item != neighbourHolderSeed]
+                        targetMaxDistance = maxDistance(self, neighbourHolderSeed, targetAllItems)
+                        targetAvgDistance = avgDistance(self, neighbourHolderSeed, targetAllItems)
 
                     if not nghID in neighbourChangables:
                         continue
@@ -1587,12 +1755,12 @@ def neighboursGPKG(self, feedback, totalAreas=None, context=None):
                                 # Distance conditions
                                 if self.strictHDI:
                                     holderNewAllItems = [item for item in queryAllHolderItem(self, holder) if item != seed] + neighbourCombination - combination
-                                    holderNewMaxDistance = queryMaxDistance(self, seed, holderNewAllItems)
-                                    holderNewAvgDistance = queryTotalDistance(self, seed, holderNewAllItems)/len(holderNewAllItems)
+                                    holderNewMaxDistance = maxDistance(self, seed, holderNewAllItems)
+                                    holderNewAvgDistance = avgDistance(self, seed, holderNewAllItems)
 
                                     targetNewAllItems = [item for item in queryAllHolderItem(self, neighbourHolder) if item != neighbourHolderSeed] + combination - neighbourCombination
-                                    targetNewMaxDistance = queryMaxDistance(self, neighbourHolderSeed, targetNewAllItems)
-                                    targetNewAvgDistance = queryTotalDistance(self, neighbourHolderSeed, targetNewAllItems)/len(targetNewAllItems)
+                                    targetNewMaxDistance = maxDistance(self, neighbourHolderSeed, targetNewAllItems)
+                                    targetNewAvgDistance = avgDistance(self, neighbourHolderSeed, targetNewAllItems)/len(targetNewAllItems)
 
                                     # Max Distance condition
                                     if holderMaxDistance < holderNewMaxDistance or targetMaxDistance < targetNewMaxDistance:
@@ -1618,12 +1786,12 @@ def neighboursGPKG(self, feedback, totalAreas=None, context=None):
                                         totalAreaDifference = difference
                     if holderCombinationForChange and neighbourCombinationForChange:
                         self.counter += 1   
-                        setAttributeValuesGPKG(self, holder, neighbourHolder, holderCombinationForChange, neighbourCombinationForChange)
+                        setAttributeValuesGPKG(self, holder, neighbourHolder, holderCombinationForChange, neighbourCombinationForChange, connection)
                         if self.stats:
                             self.interactionTable[holder][neighbourHolder] += 1
                             self.interactionTable[neighbourHolder][holder] += 1    
-                        update_distancesGPKG(self)
-                        update_seedsGPKG(self, nghID)
+                        update_distancesGPKG(self, connection)
+                        update_seedsGPKG(self, nghID, connection)
                         update_holdersHoldingsNumberGPKG(self,  holder, neighbourHolder, holderCombinationForChange, neighbourCombinationForChange)
                         commitMessage = f'Change {self.counter} for {neighbourCombinationForChange} (holder:{neighbourHolder}) to get neighbour of {seed} (holder:{holder}): ' \
                                         f'{holderCombinationForChange} for {neighbourCombinationForChange}'
@@ -1631,7 +1799,9 @@ def neighboursGPKG(self, feedback, totalAreas=None, context=None):
                         feedback.pushInfo(commitMessage)
 
                         holdersLocalTotalArea[holder] = holderNewTotalArea
-                        holdersLocalTotalArea[neighbourHolder] = neighbourNewTotalArea                            
+                        holdersLocalTotalArea[neighbourHolder] = neighbourNewTotalArea
+
+        connection.close()                              
 
         turnChanges = self.counter - localChanges
         feedback.pushInfo(f'Changes in round {self.turn}: {turnChanges}') 
@@ -1676,73 +1846,94 @@ def closerGPKG(self, feedback, totalAreas=None, context=None):
     while changer:
         self.turn += 1
         maxTurn -= 1
-        self.actualIdAttribute, self.actualHolderAttribute = setTurnAttributesGPKG(self)
+        changedOnce = []
+        connection = connectToDB(self.layer[0])
+        self.actualIdAttribute, self.actualHolderAttribute = setTurnAttributesGPKG(self, connection)
         feedback.pushInfo(f'Round {self.turn}')
+        
         for holder in self.holdersWithHoldings.keys():
             if holder == 'NULL':
                 continue
 
-            seeds = querySeeds(self, holder)
+            seeds = querySeeds(self, holder, connection)
             if not seeds:
                 continue
             seed = seeds[0]
 
+            holderAllItems = [item for item in queryAllHolderItem(self, holder, connection) if item != seed]
+            if len(holderAllItems) == 0:
+                continue
+
             targetHoldings = list(self.filteredDistanceMatrix[seed].keys())
-            targetHolders = list(set([queryHolder(self, holding) for holding in targetHoldings]))
+            targetHolders = list(set([queryHolder(self, holding, connection) for holding in targetHoldings]))
 
             if self.simply:
                 if len(targetHolders) > 50:
                     targetHolders = random.choices(targetHolders, k=50)
 
-            
             for targetHolder in targetHolders:
-                tempHolderCombination = None
-                tempTargetCombination = None
-                tempHolderTotalArea = None
-                tempTargetTotalArea = None
-                targetHolder = None
+                changeHolderCombination = None
+                changeTargetCombination = None
+                changeHolderTotalArea = None
+                changeTargetTotalArea = None
                 measure = None
+                numberOfCandidates = 0
 
-                holderChangables = queryChangableItems(self, holder, seed)
+                queryTime = time.time()
+                holderChangables = queryChangableItemsWithoutDistance(self, holder, connection)
+                holderChangables = [holding for holding in holderChangables if holding in targetHoldings and holding not in changedOnce]
+                if not holderChangables:
+                    continue
+
                 holderTotalArea = holdersLocalTotalArea[holder]
                 holderAllItems = [item for item in queryAllHolderItem(self, holder) if item != seed]
-                holderMaxDistance = queryMaxDistance(self, seed, holderAllItems)
-                holderAvgDistance = queryTotalDistance(self, seed, holderAllItems)/len(holderAllItems)
-
+                holderMaxDistance = maxDistance(self, seed, holderAllItems)
+                holderAvgDistance = avgDistance(self, seed, holderAllItems)
 
                 try:
-                   targetHolderSeed = querySeeds(self, targetHolder)[0]
+                   targetHolderSeed = querySeeds(self, targetHolder, connection)[0]
                 except IndexError:
                     if self.useSingle:
                         targetHolderSeed = False
                     else:
                         continue
                 
-                targetHolderChangables = queryChangableItems(self, targetHolder, targetHolderSeed)
-                filteredLocalTargetHoldings = [holding for holding in targetHolderChangables if holding in targetHoldings]
+                targetHolderChangables = queryChangableItemsWithoutDistance(self, targetHolder, connection)
+                targetHolderChangables = [holding for holding in targetHolderChangables if holding in targetHoldings]
+                filteredLocalTargetHoldings = [holding for holding in targetHolderChangables if holding in targetHoldings and holding not in changedOnce]
                 targetHolderTotalArea = holdersLocalTotalArea[targetHolder]
 
                 if targetHolderSeed:
-                    targetAllItems = [item for item in queryAllHolderItem(self, targetHolder) if item != targetHolderSeed]
-                    targetMaxDistance = queryMaxDistance(self, targetHolderSeed, targetAllItems)
-                    targetAvgDistance = queryTotalDistance(self, targetHolderSeed, targetAllItems)/len(targetAllItems)
+                    targetAllItems = [item for item in queryAllHolderItem(self, targetHolder, connection) if item != targetHolderSeed]
+                    if len(targetAllItems) == 0:
+                        continue
+                    targetMaxDistance = maxDistance(self, targetHolderSeed, targetAllItems)
+                    targetAvgDistance = avgDistance(self, targetHolderSeed, targetAllItems)
                 else:
                     targetMaxDistance = 0
                     targetAvgDistance = 0
 
-
-                goodCombinations = []
                 combTurn = 0
                 for targetCombination in vgle_utils.combine_with_constant_in_all(filteredLocalTargetHoldings):
-                    if self.simply:
+                    if numberOfCandidates > MAXCANDIDATES or combTurn > MAXCOMBTURN:
+                        break
+
+                    for holderCombination in vgle_utils.combine_with_constant_in_all(holderChangables):
+                        if numberOfCandidates > MAXCANDIDATES:
+                            break
+
                         if combTurn < MAXCOMBTURN:
                             combTurn += 1
                         else:
                             break
 
-                    for holderCombination in vgle_utils.combine_with_constant_in_all(holderChangables):
+                        # Polygon number condition
+                        #holderNewHoldignNum = self.holdersHoldingNumber[holder] - len(holderCombination) + len(targetCombination)
+                        #targetNewHoldingNum = self.holdersHoldingNumber[targetHolder] - len(targetCombination) + len(holderCombination)
+                        #if not holderNewHoldignNum <= self.holdersHoldingNumber[holder] or not targetNewHoldingNum <= self.holdersHoldingNumber[targetHolder]:
+                        #    continue    
 
-                        # Base condition: weight           
+                        # Base condition: weight    
                         temporaryHolderArea = vgle_utils.calculateCombinationArea(self, holderCombination)       
                         temporaryTargetArea = vgle_utils.calculateCombinationArea(self, targetCombination)        
                         newHolderTotalArea = holderTotalArea - temporaryHolderArea + temporaryTargetArea
@@ -1752,13 +1943,13 @@ def closerGPKG(self, feedback, totalAreas=None, context=None):
                         if not thresholdHolder or not thresholdTarget:
                             continue
 
-                        holderNewAllItems = [item for item in queryAllHolderItem(self, holder) if item != seed] + neighbourCombination - combination
-                        holderNewMaxDistance = queryMaxDistance(self, seed, holderNewAllItems)
-                        holderNewAvgDistance = queryTotalDistance(self, seed, holderNewAllItems)/len(holderNewAllItems)
+                        holderNewAllItems = [item for item in queryAllHolderItem(self, holder, connection) if item != seed and item not in holderCombination] + list(targetCombination)
+                        holderNewMaxDistance = maxDistance(self, seed, holderNewAllItems)
+                        holderNewAvgDistance = avgDistance(self, seed, holderNewAllItems)
 
-                        targetNewAllItems = [item for item in queryAllHolderItem(self, neighbourHolder) if item != neighbourHolderSeed] + combination - neighbourCombination
-                        targetNewMaxDistance = queryMaxDistance(self, neighbourHolderSeed, targetNewAllItems)
-                        targetNewAvgDistance = queryTotalDistance(self, neighbourHolderSeed, targetNewAllItems)/len(targetNewAllItems)
+                        targetNewAllItems = [item for item in queryAllHolderItem(self, targetHolder, connection) if item != targetHolderSeed and item not in targetCombination] + list(holderCombination)
+                        targetNewMaxDistance = maxDistance(self, targetHolderSeed, targetNewAllItems)
+                        targetNewAvgDistance = avgDistance(self, targetHolderSeed, targetNewAllItems)
 
                         # Max Distance condition
                         if holderMaxDistance < holderNewMaxDistance or targetMaxDistance < targetNewMaxDistance:
@@ -1768,185 +1959,53 @@ def closerGPKG(self, feedback, totalAreas=None, context=None):
                         if holderAvgDistance < holderNewAvgDistance or targetAvgDistance < targetNewAvgDistance:
                             continue
 
-                        # Polygon number condition
-                        holderNewHoldignNum = self.holdersHoldingNumber[holder] - len(holderCombination) + len(targetCombination)
-                        targetNewHoldingNum = self.holdersHoldingNumber[targetHolder] - len(targetCombination) + len(holderCombination)
-                        if not holderNewHoldignNum <= self.holdersHoldingNumber[holder] or not targetNewHoldingNum <= self.holdersHoldingNumber[targetHolder]:
-                            continue      
-
-                        weightDifference = abs(newHolderTotalArea-holderTotalArea)/holderTotalArea*100
-                        distanceDifference = abs(holderNewAvgDistance-holderAvgDistance)/holderAvgDistance*100 if holderAvgDistance != 0 else 1
-
-                if goodCombinations:
-                    for holderCombination, targetCombination in goodCombinations:
-                        newHolderTotalArea = holderTotalArea - vgle_utils.calculateCombinationArea(self, holderCombination) + vgle_utils.calculateCombinationArea(self, targetCombination)
-                        if not vgle_utils.checkTotalAreaThreshold(self, newHolderTotalArea, holder):
-                            continue
-                        newTargetTotalArea = holdersLocalTotalArea[tempTargetHolder] - vgle_utils.calculateCombinationArea(self, targetCombination) + vgle_utils.calculateCombinationArea(self, holderCombination)
-                        if not vgle_utils.checkTotalAreaThreshold(self, newTargetTotalArea, tempTargetHolder):
-                            continue
-                        localMeasure = sum([vgle_utils.calculateCompositeNumber(self, seed, tempId) for tempId in holderCombination])
-
-                        if not measure:
-                            targetHolder = copy.copy(tempTargetHolder)
-                            tempHolderCombination = copy.copy(holderCombination)
-                            tempTargetCombination = copy.copy(targetCombination)
-                            measure = copy.copy(localMeasure)
-                            tempHolderTotalArea = copy.copy(newHolderTotalArea)
-                            tempTargetTotalArea = copy.copy(newTargetTotalArea)
-                        else:
-                            if measure < localMeasure:
-                                targetHolder = copy.copy(tempTargetHolder)
-                                tempHolderCombination = copy.copy(holderCombination)
-                                tempTargetCombination = copy.copy(targetCombination)
-                                measure = copy.copy(localMeasure)
-                                tempHolderTotalArea = copy.copy(newHolderTotalArea)
-                                tempTargetTotalArea = copy.copy(newTargetTotalArea)
-
-
-
-
-
-
-
-                neighboursIds = queryNeighbours(self, holder, seed, neighbours)
-
-                #feedback.pushInfo(f'Holder {holder} - Seeds: {seeds} - Neighbours: {neighboursIds}')
-
-                if self.strictHDI:
-                    holderMaxDistance = queryMaxDistance(self, seed, holder=holder)
-
-                for nghID in neighboursIds:
-                    # Get holder total area
-                    holderTotalArea = holdersLocalTotalArea[holder]
-                    
-                    # Filter holdings
-                    holderChangables = queryChangableItems(self, holder, seed)
-
-                    #feedback.pushInfo(f'HolderChangables for holder {holder} and seed {seed}: {len(holderChangables)}')
-
-                    if not holderChangables:
-                        continue
-                    
-                    # Get ngh holder name
-                    neighbourHolder = queryHolder(self, nghID)
-                    if neighbourHolder != 'NULL' and neighbourHolder != holder:
                         try:
-                            neighbourHolderSeed = querySeeds(self, neighbourHolder)[0]
-                        except IndexError:
-                            if self.useSingle:
-                                neighbourHolderSeed = False
-                            else:
-                                continue
-                    # Get holder total area
-                    neighbourHolderTotalArea = holdersLocalTotalArea[neighbourHolder]
-                    # Get holders holdings
-                    neighbourChangables = queryChangableItems(self, neighbourHolder, seed)
-                    #feedback.pushInfo(f'NeighbourChangables for neighbour holder {neighbourHolder} and seed {neighbourHolderSeed}: {len(neighbourChangables)}')
-                    if not neighbourChangables:
-                        continue
+                            weightDifference = abs(newHolderTotalArea-holderTotalArea)/holderTotalArea*100
+                        except ZeroDivisionError:
+                            weightDifference = 0
+                        try:   
+                            distanceDifference = abs(holderNewAvgDistance-holderAvgDistance)/holderAvgDistance*100
+                        except ZeroDivisionError:
+                            distanceDifference = 0
+                        localMeasure = weightDifference + distanceDifference
 
-                    if self.strictHDI:
-                        targetMaxDistance = queryMaxDistance(self, nghID, holder=neighbourHolder)
+                        if measure is None:
+                            numberOfCandidates += 1
+                            measure = copy.copy(localMeasure)
 
-                    if not nghID in neighbourChangables:
-                        continue
+                            changeHolderCombination = copy.copy(holderCombination)
+                            changeTargetCombination = copy.copy(targetCombination)
+                            changeHolderTotalArea = copy.copy(newHolderTotalArea)
+                            changeTargetTotalArea = copy.copy(newTargetTotalArea)
+                        else:
+                            if localMeasure < measure:
+                                numberOfCandidates += 1
+                                measure = copy.copy(localMeasure)
 
-                    if not neighbourHolderSeed:
-                        neighbourHoldingsCombinations = [[nghID]]
-                    else: 
-                        neighbourHoldingsCombinations = \
-                            vgle_utils.combine_with_constant_in_all(
-                                neighbourChangables, nghID)
+                                changeHolderCombination = copy.copy(holderCombination)
+                                changeTargetCombination = copy.copy(targetCombination)
+                                changeHolderTotalArea = copy.copy(newHolderTotalArea)
+                                changeTargetTotalArea = copy.copy(newTargetTotalArea)
 
-                    holdingCombinations = vgle_utils.combine_with_constant_in_all(holderChangables)
+                if measure:
+                    self.counter += 1   
+                    setAttributeValuesGPKG(self, holder, targetHolder, changeHolderCombination, changeTargetCombination, connection)
+                    changedOnce.extend(changeHolderCombination)
+                    changedOnce.extend(changeTargetCombination)
+                    if self.stats:
+                        self.interactionTable[holder][targetHolder] += 1
+                        self.interactionTable[targetHolder][holder] += 1    
+                    update_distancesGPKG(self, connection)
+                    commitMessage = f'Change {self.counter} for {changeTargetCombination} (holder:{targetHolder}) to get closer to {seed} (holder:{holder}): ' \
+                                    f'{changeHolderCombination} for {changeTargetCombination}'
+                    logging.debug(commitMessage)
+                    feedback.pushInfo(commitMessage)
 
-                    holderCombinationForChange = None
-                    neighbourCombinationForChange = None
-                    holderNewTotalArea = 0
-                    neighbourNewTotalArea = 0
-                    totalAreaDifference = None
-                    
-                    lenTurn = 0
-                    for combination in holdingCombinations:
-                        combinationLenght = len(combination)
-                        combTurn = 0
-                        if self.simply:
-                            if combTurn > 10000*combinationLenght and lenTurn > 20000:
-                                break
-                        for neighbourCombination in neighbourHoldingsCombinations:                
-                            lenTurn += 1  
-                            combTurn += 1
-                            neighbourCombinationLenght = len(neighbourCombination)
-
-                            #feedback.pushInfo(f'Combination turn - {lenTurn}')
-
-                            # Base condition: weight           
-                            temporaryHolderArea = vgle_utils.calculateCombinationArea(self, combination)       
-                            temporaryTargetArea = vgle_utils.calculateCombinationArea(self, neighbourCombination)        
-                            newHolderTotalArea = holderTotalArea - temporaryHolderArea + temporaryTargetArea
-                            newNeighbourTotalArea = neighbourHolderTotalArea - temporaryTargetArea + temporaryHolderArea
-                            thresholdHolder = vgle_utils.checkTotalAreaThreshold(self, newHolderTotalArea, holder)
-                            thresholdNeighbour = vgle_utils.checkTotalAreaThreshold(self, newNeighbourTotalArea, neighbourHolder)
-                            difference = abs(newHolderTotalArea-holderTotalArea)
-                            if thresholdHolder and thresholdNeighbour:
-                                # Parcel number condition
-                                if self.strictHFI:
-                                    holderNewHoldignNum = self.holdersHoldingNumber[holder] - combinationLenght + neighbourCombinationLenght
-                                    targetNewHoldingNum = self.holdersHoldingNumber[neighbourHolder] - neighbourCombinationLenght + combinationLenght
-                                    if holderNewHoldignNum > self.holdersHoldingNumber[holder] or targetNewHoldingNum > self.holdersHoldingNumber[neighbourHolder]:
-                                        continue
-
-                                # Distance conditions
-                                if self.strictHDI:
-                                    # Max Distance condition
-                                    holderNewMaxDistance = queryMaxDistance(self, seed, combination=neighbourCombination)
-                                    if holderMaxDistance > holderNewMaxDistance:
-                                        continue
-                                    targetNewMaxDistance = queryMaxDistance(self, neighbourHolderSeed, combination=combination)
-                                    if targetMaxDistance > targetNewMaxDistance:
-                                        continue  
-
-                                    # Average Distance condition
-                                    holderAvgDistance = self.totalDistance[holder]/self.holdersHoldingNumber[holder]
-                                    holderpossibleHoldingList = [x for x in queryHoldings(self, holder) if x not in combination] + neighbourCombination
-                                    holderNewAvgDistance = queryAvgDistance(self, holderpossibleHoldingList, seed)
-                                    if holderAvgDistance > holderNewAvgDistance:
-                                        continue
-                                    neighbourAvgDistance = self.totalDistance[neighbourHolder]/self.holdersHoldingNumber[neighbourHolder]
-                                    neighbourPossibleHoldingList = [x for x in queryHoldings(self, neighbourHolder) if x not in neighbourCombination] + combination
-                                    neighbourNewAvgDistance = queryAvgDistance(self, neighbourPossibleHoldingList, neighbourHolderSeed)
-                                    if neighbourAvgDistance > neighbourNewAvgDistance:
-                                        continue
-                                if totalAreaDifference is None:
-                                    #feedback.pushInfo(f'Possible combination: {combination}')
-                                    holderCombinationForChange = combination
-                                    neighbourCombinationForChange = neighbourCombination
-                                    holderNewTotalArea = newHolderTotalArea
-                                    neighbourNewTotalArea = newNeighbourTotalArea
-                                    totalAreaDifference = difference
-                                else:
-                                    if difference < totalAreaDifference:
-                                        holderCombinationForChange = combination
-                                        neighbourCombinationForChange = neighbourCombination
-                                        holderNewTotalArea = newHolderTotalArea
-                                        neighbourNewTotalArea = newNeighbourTotalArea
-                                        totalAreaDifference = difference
-                    if holderCombinationForChange and neighbourCombinationForChange:
-                        self.counter += 1   
-                        setAttributeValuesGPKG(self, holder, neighbourHolder, holderCombinationForChange, neighbourCombinationForChange)
-                        if self.stats:
-                            self.interactionTable[holder][neighbourHolder] += 1
-                            self.interactionTable[neighbourHolder][holder] += 1    
-                        update_distancesGPKG(self)
-                        update_seedsGPKG(self, nghID)
-                        commitMessage = f'Change {self.counter} for {neighbourCombinationForChange} (holder:{neighbourHolder}) to get neighbour of {seed} (holder:{holder}): ' \
-                                        f'{holderCombinationForChange} for {neighbourCombinationForChange}'
-                        logging.debug(commitMessage)
-                        feedback.pushInfo(commitMessage)
-
-                        holdersLocalTotalArea[holder] = holderNewTotalArea
-                        holdersLocalTotalArea[neighbourHolder] = neighbourNewTotalArea                            
+                    holdersLocalTotalArea[holder] = changeHolderTotalArea
+                    holdersLocalTotalArea[targetHolder] = changeTargetTotalArea  
+        
+        connection.commit()
+        connection.close()                          
 
         turnChanges = self.counter - localChanges
         feedback.pushInfo(f'Changes in round {self.turn}: {turnChanges}') 
