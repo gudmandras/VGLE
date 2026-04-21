@@ -1,4 +1,4 @@
-import random, tempfile, time, os, shutil, gc
+import random, tempfile, time, os, shutil, gc, sqlite3
 from datetime import datetime
 from pathlib import Path
 from osgeo import ogr
@@ -26,11 +26,13 @@ from qgis.core import (QgsProject,
                        QgsProcessingParameterString,
                        QgsDataSourceUri,
                        QgsProcessingParameterFile,
+                       QgsProcessingParameterFeatureSource,
                        QgsProcessingParameterDefinition,
+                       QgsProcessingParameterMapLayer,
                        QgsProcessingParameterFolderDestination)
 from qgis import processing
 import qgis.utils
-from . import vgle_layers
+from . import vgle_layers, vgle_gpkgs, vgle_utils
 
 
 class JustTopDownAlgorithm(QgsProcessingAlgorithm):
@@ -38,9 +40,11 @@ class JustTopDownAlgorithm(QgsProcessingAlgorithm):
     def initAlgorithm(self, config=None):
         self.addParameter(QgsProcessingParameterVectorLayer('Inputlayer', 'Input layer',
                                                             types=[QgsProcessing.TypeVectorPolygon], defaultValue=None))
+        self.addParameter(QgsProcessingParameterBoolean('Preference', 'Give preference for the selected features',
+                                                        defaultValue=False))
         self.addParameter(QgsProcessingParameterField('AssignedByField', 'Holder by field',
                                                       type=QgsProcessingParameterField.Any,
-                                                      parentLayerParameterName='Inputlayer', allowMultiple=True))
+                                                      parentLayerParameterName='Inputlayer'))                                     
         self.addParameter(QgsProcessingParameterField('BalancedByField', 'Balanced by field',
                                                       type=QgsProcessingParameterField.Numeric,
                                                       parentLayerParameterName='Inputlayer',
@@ -55,13 +59,17 @@ class JustTopDownAlgorithm(QgsProcessingAlgorithm):
                                                      options=['Neighbours', 'Closer', 'Neighbours, then closer',
                                                               'Closer, then neighbours'],
                                                      allowMultiple=False, defaultValue='Neighbours'))
-        self.addParameter(QgsProcessingParameterString('Postfix', 'Postfix for the group files', defaultValue='first run'))
-        self.addParameter(QgsProcessingParameterFolderDestination('OutputDirectory', 'Output directory',
-                                                                  defaultValue=None, createByDefault=True))
         self.algorithmNames = ['Neighbours', 'Closer', "Neighbours, then closer", "Closer, then neighbours"]
-        self.addParameter(QgsProcessingParameterFile('csvPath', 'R created csv path',
-                                                            behavior=QgsProcessingParameterFile.File, fileFilter='CSV files (*.csv)', defaultValue=None))
         
+        self.addParameter(QgsProcessingParameterMapLayer('SwapFreq', 'Swap frequency layer'))
+        
+        #self.addParameter(QgsProcessingParameterFile('csvPath', 'R created csv path',
+        #                                                    behavior=QgsProcessingParameterFile.File, fileFilter='CSV files (*.csv)', defaultValue=None))
+        
+        onlySelected = QgsProcessingParameterBoolean('OnlySelected', 'Only use the selected features',
+                                                     defaultValue=False)
+        onlySelected.setFlags(onlySelected.flags() | QgsProcessingParameterDefinition.FlagAdvanced)
+        self.addParameter(onlySelected)
         single = QgsProcessingParameterBoolean('Single', "Use single holding's holders polygons", defaultValue=False)
         single.setFlags(single.flags() | QgsProcessingParameterDefinition.FlagAdvanced)
         self.addParameter(single)
@@ -71,11 +79,8 @@ class JustTopDownAlgorithm(QgsProcessingAlgorithm):
         strict2 = QgsProcessingParameterBoolean('StrictHFI', "Strict condition on Holding Fragmentation Indicator (HFI)", defaultValue=False)
         strict2.setFlags(strict2.flags() | QgsProcessingParameterDefinition.FlagAdvanced)
         self.addParameter(strict2)
-        simplfy = QgsProcessingParameterBoolean('Simply', "Simply algorithm to process big dataset",
-                                                defaultValue=False)
-        simplfy.setFlags(simplfy.flags() | QgsProcessingParameterDefinition.FlagAdvanced)
-        self.addParameter(simplfy)
         self.permanent_data = {}
+        self.version = '2026-04-10-02'
 
     def tr(self, string):
         return QCoreApplication.translate('Processing', string)
@@ -105,11 +110,14 @@ class JustTopDownAlgorithm(QgsProcessingAlgorithm):
         except Exception as e:
             return f"<html><body><p>Error reading description file: {e}</p></body></html>"
 
-    def processAlgorithm(self, parameters, context, feedback):
+    def processAlgorithm(self, parameters, context, model_feedback):
+        #import ptvsd
+        #ptvsd.debug_this_thread()
+        parameters["Simply"] = False
         results = {}
 
         if not is_r_provider_installed():
-            feedback.reportError('R provider is not installed. Please install R provider to use this algorithm.',
+            model_feedback.reportError('R provider is not installed. Please install R provider to use this algorithm.',
                                  fatalError=True)
             return {}
 
@@ -117,30 +125,60 @@ class JustTopDownAlgorithm(QgsProcessingAlgorithm):
         if R_folder:
             copy_sucess = copyR_script(os.path.join(os.path.dirname(os.path.abspath(__file__)),'topdown.rsx'))
             if not copy_sucess:
-                feedback.reportError("R Provider - RSX file cannot copied to the Rfolder.")
+                model_feedback.reportError("R Provider - RSX file cannot copied to the Rfolder.")
                 return {}
         else:
-            feedback.reportError("R Provider - R folder is not configured. Cannot install RSX script.")
+            model_feedback.reportError("R Provider - R folder is not configured. Cannot install RSX script.")
             return {}
 
-        timeStamp = datetime.fromtimestamp(time.time()).strftime("%d_%m_%Y_%H_%M_%S")
-        inputLayer = self.parameterAsVectorLayer(parameters, 'Inputlayer', context)
-        context.temporaryLayerStore().addMapLayer(inputLayer)
-        self.permanent_data['inputLayer'] = inputLayer
-        if parameters['OutputDirectory'] == 'TEMPORARY_OUTPUT':
-            parameters['OutputDirectory'] = tempfile.mkdtemp()
-        tempLayer = vgle_layers.createTempLayer(self.permanent_data['inputLayer'], parameters["OutputDirectory"],
-                                                'topdown', timeStamp)
-        context.temporaryLayerStore().addMapLayer(tempLayer)
-        self.permanent_data['tempLayer'] = tempLayer 
-        layer, self.holderAttribute = vgle_layers.setHolderField(self.permanent_data['tempLayer'], parameters["AssignedByField"])
-        context.temporaryLayerStore().addMapLayer(layer)
-        self.permanent_data['layer'] = layer
+        if not vgle_gpkgs.checkTableName(parameters, model_feedback):
+            return {}
+        frequency, validSwapFreq = vgle_gpkgs.checkSwapFreq(self.parameterAsVectorLayer(parameters, 'SwapFreq', context))
+        if not validSwapFreq:
+            model_feedback.reportError(f"swap frequency is not a gpkg layer or it is missing required fields ('to', 'from','weight') in swap frequency layer.")
+            return {}
+        else:
+            self.SwapFreqLayer = validSwapFreq
 
-        feedback.pushInfo('Group creation started')
-        groupsCSV = self.parameterAsFile(parameters, 'csvPath', context)
+        feedback = QgsProcessingMultiStepFeedback(2, model_feedback)
+        feedback.pushWarning(f"Plugin version: {self.version}\n")
+
+        timeStamp = datetime.fromtimestamp(time.time()).strftime("%d_%m_%Y_%H_%M_%S")
+        mainStartTime = time.time()
+
+        self.holderAttribute = self.parameterAsString(parameters, 'AssignedByField', context)
+
+        filePath = self.parameterAsVectorLayer(parameters, 'Inputlayer', context).source()
+        directory = os.path.dirname(filePath)
+        parameters["OutputDirectory"] = directory
+        if filePath[-4:].lower() != 'gpkg' and os.path.splitext(filePath)[1][:5].lower() != '.gpkg':
+            feedback.reportError('The layer is not part of a GPKG')
+            return {}
+        else:
+            try:
+                gpkg_path, source_layer_name = filePath.split("|layername=")
+            except ValueError:
+                gpkg_path = filePath
+                source_layer_name = vgle_gpkgs.getFirstLayerFromGPKG(gpkg_path)
+                if not source_layer_name:
+                    feedback.reportError("No feature layers found in the GPKG.")
+                    return None
+            self.layer = (gpkg_path, source_layer_name)
+       
+        vgle_utils.startLogging(self.parameterAsVectorLayer(parameters, 'Inputlayer', context), parameters, timeStamp, self.version)
+
+        csv_path = os.path.join(directory, f'{self.SwapFreqLayer}_groups.csv')
+        csv_sanitized = csv_path.replace('\\', '/')
+
+        result = processing.run("r:topdown", {
+            'INPUT': frequency,
+            'Group': csv_sanitized
+        }, context=context, feedback=feedback, is_child_algorithm=True)
+
+        groupsCSV = result['Group']
+
+        feedback.pushInfo('Group declaration started')
         parts = str(Path(groupsCSV).stem).split('_')
-        ddate = "_".join(parts[2:])
 
         feedback.pushInfo('Group CSV created at: ' + groupsCSV)
         uri = f"file:{groupsCSV}?type=csv&geomType=none"
@@ -153,97 +191,296 @@ class JustTopDownAlgorithm(QgsProcessingAlgorithm):
             groups.setdefault(group_id, []).append(holder_id)
             assigned_holders.add(holder_id)
         none_group = max(groups.keys())
-        none_group_members = [f[self.holderAttribute] for f in self.permanent_data['layer'].getFeatures() if f[self.holderAttribute] not in assigned_holders]
+        none_group_members = queryNoneGroupMembers(self, assigned_holders)
         
         if none_group_members:
             groups[none_group + 1] = none_group_members
-        feedback.pushInfo('Group creation finished!')
+        #feedback.setSteps(len(groups) + 1)
+        feedback.setCurrentStep(1)
+        feedback.pushInfo('Group declaration finished!')
 
         feedback.pushInfo('Group processing started!')
+        topdownGroupsLayer = None
         results['OUTPUT'] = []
         group_paths = {}
+        counter = 1
+        self.colList = [self.parameterAsString(parameters, 'AssignedByField', context), self.parameterAsString(parameters, 'BalancedByField', context)]
         for key, group in groups.items():
-            self.selectGroup(group, self.permanent_data['layer'], self.holderAttribute, context, key)
-            feedback.pushInfo(f'Group {key} processing started with {self.permanent_data["groupLayer"].featureCount()} features')
-            tempResult = processing.run("Polygon Grouper:polygon_grouper", {
-                    'Inputlayer': self.permanent_data['groupLayer'],
-                    'Preference': True,
-                    'AssignedByField': [self.holderAttribute],
+            counter += 1
+            group_table, group_rows = self.selectGroup(timeStamp, key, group)
+            if topdownGroupsLayer is None:
+                topdownGroupsLayer = self.createEmptyGroup(timeStamp, key, 'topdown_groups', group)
+                topdownGroupsLayerMerged = self.createEmptyGroup(timeStamp, key, 'topdown_groups_merged', group)
+            feedback.pushInfo(f'Group {key} processing started with {group_rows} features')
+            tempResult = processing.run("Polygon Grouper:polygon_grouper_gpkg", {
+                    'Inputlayer': QgsVectorLayer(f'{gpkg_path}|layername={group_table}', f"group_{key}", "ogr"),
+                    'Preference': parameters['Preference'],
+                    'AssignedByField': [parameters['AssignedByField']],
                     'BalancedByField': parameters['BalancedByField'],
                     'Tolerance': parameters['Tolerance'],
                     'DistanceThreshold': parameters['DistanceThreshold'],
                     'SwapToGet': parameters['SwapToGet'],
                     'OutputDirectory': parameters['OutputDirectory'],
-                    'OnlySelected': False, 
+                    'OnlySelected': parameters['OnlySelected'],
                     'Single': parameters['Single'],
                     'StrictHDI': parameters['StrictHDI'],
                     'StrictHFI': parameters['StrictHFI'],
                     'Simply': parameters['Simply'],
                     'Stats': False
                 }, context=context, feedback=feedback, is_child_algorithm=True)
-            try:
-                group_paths[key] = (tempResult['OUTPUT'].source(), tempResult['MERGED'].source())
-                remove_layer(tempResult['OUTPUT'].id())
-                remove_layer(tempResult['MERGED'].id())
-            except KeyError:
-                groupedLayer = self.permanent_data["groupLayer"]
-                groupedLayer.setName(f"topdown_group_{key}_{ddate}_{parameters['Postfix']}_no_changes")
-                
-                save_path = os.path.join(parameters['OutputDirectory'], f"topdown_group_{key}_{ddate}_{parameters['Postfix']}_no_changes.gpkg")
-                options = QgsVectorFileWriter.SaveVectorOptions()
-                options.driverName = "GPKG"
-                QgsVectorFileWriter.writeAsVectorFormatV2(
-                    groupedLayer,
-                    save_path,
-                    context.transformContext(),
-                    options
-                )
-                group_paths[key] = (save_path, save_path)
+            feedback.setCurrentStep(counter)
+            feedback.pushInfo(f'Group {key} processing finished!')
+            group_paths[key] = (tempResult['OUTPUT'], tempResult['MERGED'])
+            extendLayerWithGroup(self, topdownGroupsLayer, tempResult['OUTPUT'], context)
+            extendLayerWithGroup(self, topdownGroupsLayerMerged, tempResult['MERGED'], context)
+            vgle_gpkgs.deleteTable(gpkg_path, group_table)
 
-            try:
-                storage = context.temporaryLayerStore()
-                layer_ids = list(storage.mapLayers().keys())
-                for l_id in layer_ids:
-                    layer = storage.mapLayer(l_id)
-                    if 'neighbours' in layer.name() or 'topdown_group' in layer.name():
-                        storage.removeMapLayer(l_id)
-            except Exception as e:
-                pass
-            self.permanent_data['layer'].removeSelection()
-            try:
-                del tempResult
-                gc.collect()
-            except:
-                pass
-            QgsApplication.processEvents()
-        outpath_1 = os.path.join(parameters['OutputDirectory'], f'topdown_groups_{ddate}.gpkg')
-        outpath_2 = os.path.join(parameters['OutputDirectory'], f'topdown_groups_merged_{ddate}.gpkg')
-        
-        merge_to_geopackage([group[0] for group in group_paths.values()], outpath_1, context)
-        merge_to_geopackage([group[1] for group in group_paths.values()], outpath_2, context)
 
         #layer1 = QgsVectorLayer(outpath_1, f"topdown_groups_{ddate}", "ogr")
         #layer2 = QgsVectorLayer(outpath_2, f"topdown_groups_merged_{ddate}", "ogr")
 
-        self.locked_files = [group[0] for group in group_paths.values()] + [group[1] for group in group_paths.values()]
+        for swapped_uri, merged_uri in group_paths.values():
+            gpkg, swapped = swapped_uri.split("|layername=")
+            vgle_gpkgs.deleteTable(gpkg, swapped)
+            gpkg, merged = merged_uri.split("|layername=")
+            vgle_gpkgs.deleteTable(gpkg, merged)
 
-        results['OUTPUT'] = []
-        results['MERGED'] = []
-        self.add_groups(outpath_1, results, context, keyword='OUTPUT')
-        self.add_groups(outpath_2, results, context, keyword='MERGED')
+
+        results['OUTPUT'] = topdownGroupsLayer
+        results['MERGED'] = topdownGroupsLayerMerged
+        #self.add_groups(outpath_1, results, context, keyword='OUTPUT')
+        #self.add_groups(outpath_2, results, context, keyword='MERGED')
 
         return results
 
-    def selectGroup(self, group, layer, idAttribute, context, key):
-        quoted_values = [QgsExpression.quotedValue(v) for v in group]
-        expression = f'"{idAttribute}" IN ({",".join(map(str, quoted_values))})'
-        request = QgsFeatureRequest().setFilterExpression(expression)
+    def selectGroup(self, timeStamp, postfix, fids):
+        gpkg_path, source_table = self.layer
+        conn = sqlite3.connect(gpkg_path)
+        cur = conn.cursor()
 
-        selectedFeatures = layer.materialize(request)
-        selectedFeatures.setName(f"topdown_group_{key}")
-        context.temporaryLayerStore().addMapLayer(selectedFeatures)
-        self.permanent_data['groupLayer'] = selectedFeatures
-        QgsApplication.processEvents()
+        id_list_str = ",".join(map(str, fids))
+
+        target_table = f"{source_table}_{timeStamp}_group_{postfix}"
+        
+        try:
+            cur.execute("BEGIN TRANSACTION;")
+
+            cur.execute(f"SELECT column_name FROM gpkg_geometry_columns WHERE table_name = '{source_table}';")
+
+            geom_col = cur.fetchone()[0]
+
+            cur.execute(f'CREATE TABLE "{target_table}" AS SELECT {self.colList[0]}, {self.colList[1]}, {geom_col} FROM "{source_table}" WHERE 1=0;')
+
+            query = f"""
+                INSERT INTO "{target_table}" ({self.colList[0]}, {self.colList[1]}, {geom_col}) 
+                SELECT {self.colList[0]}, {self.colList[1]}, {geom_col} FROM "{source_table}" 
+                WHERE "{self.holderAttribute}" IN ({id_list_str})
+            """
+            cur.execute(query)
+
+            cur.execute(f'ALTER TABLE "{target_table}" ADD COLUMN topdown_group REAL;')
+
+            conn.commit()
+
+            cur.execute(f'UPDATE "{target_table}" SET topdown_group = {postfix};')
+
+            cur.execute(f"""
+                INSERT INTO gpkg_contents (table_name, data_type, identifier, description, last_change, min_x, min_y, max_x, max_y, srs_id)
+                SELECT "{target_table}", data_type, "{target_table}", description, datetime('now'), 
+                    min_x, min_y, max_x, max_y, srs_id
+                FROM gpkg_contents WHERE table_name = "{source_table}"
+            """)
+
+            cur.execute(f"""
+                INSERT INTO gpkg_geometry_columns (table_name, column_name, geometry_type_name, srs_id, z, m)
+                SELECT "{target_table}", column_name, geometry_type_name, srs_id, z, m
+                FROM gpkg_geometry_columns WHERE table_name = "{source_table}"
+            """)
+
+            conn.commit()
+
+            cur.execute(f'SELECT * FROM "{target_table}";')
+            rows = len(cur.fetchall())
+
+            conn.commit()
+            conn.close()
+            return target_table, rows
+
+        except Exception as e:
+            conn.rollback()
+            print(f"Error creating subset: {e}")
+            return False, False
+        finally:
+            conn.close()
+
+    def createEmptyGroup(self, timeStamp, key, postfix, fids):
+        gpkg_path, source_table = self.layer
+        conn = sqlite3.connect(gpkg_path)
+        cur = conn.cursor()
+
+        id_list_str = ",".join(map(str, fids))
+
+        target_table = f"{source_table}_{timeStamp}_group_{postfix}"
+        
+        try:
+            cur.execute("BEGIN TRANSACTION;")
+
+            cur.execute(f"SELECT column_name FROM gpkg_geometry_columns WHERE table_name = '{source_table}';")
+
+            geom_col = cur.fetchone()[0]
+
+            cur.execute(f'CREATE TABLE "{target_table}" AS SELECT {self.colList[0]}, {self.colList[1]}, {geom_col} FROM "{source_table}" WHERE 1=0;')
+
+            #query = f"""
+            #    INSERT INTO "{target_table}" ({self.colList[0]}, {self.colList[1]}, {geom_col}) 
+            #    SELECT {self.colList[0]}, {self.colList[1]}, {geom_col} FROM "{source_table}" 
+            #    WHERE "{self.holderAttribute}" IN ({id_list_str})
+            #"""
+            #cur.execute(query)
+
+            cur.execute(f'ALTER TABLE "{target_table}" ADD COLUMN topdown_group REAL;')
+
+            conn.commit()
+
+            cur.execute(f'UPDATE "{target_table}" SET topdown_group = {key};')
+
+            cur.execute(f"""
+                INSERT INTO gpkg_contents (table_name, data_type, identifier, description, last_change, min_x, min_y, max_x, max_y, srs_id)
+                SELECT "{target_table}", data_type, "{target_table}", description, datetime('now'), 
+                    min_x, min_y, max_x, max_y, srs_id
+                FROM gpkg_contents WHERE table_name = "{source_table}"
+            """)
+
+            cur.execute(f"""
+                INSERT INTO gpkg_geometry_columns (table_name, column_name, geometry_type_name, srs_id, z, m)
+                SELECT "{target_table}", column_name, geometry_type_name, srs_id, z, m
+                FROM gpkg_geometry_columns WHERE table_name = "{source_table}"
+            """)
+
+            conn.commit()
+
+            conn.close()
+            return target_table
+
+        except Exception as e:
+            conn.rollback()
+            print(f"Error creating subset: {e}")
+            return False, False
+        finally:
+            conn.close()
+
+    def createCopyTable():
+        gpkg_path, source_table = self.layer
+        conn = sqlite3.connect(gpkg_path)
+        cur = conn.cursor()
+
+        id_list_str = ",".join(map(str, fids))
+
+        target_table = f"{source_table}_{timeStamp}_group_{postfix}"
+        
+        try:
+            cur.execute("BEGIN TRANSACTION;")
+
+            cur.execute(f"SELECT column_name FROM gpkg_geometry_columns WHERE table_name = '{source_table}';")
+
+            geom_col = cur.fetchone()[0]
+
+            cur.execute(f'CREATE TABLE "{target_table}" AS SELECT {self.colList[0]}, {self.colList[1]}, {geom_col} FROM "{source_table}" WHERE 1=0;')
+
+            query = f"""
+                INSERT INTO "{target_table}" ({self.colList[0]}, {self.colList[1]}, {geom_col}) 
+                SELECT {self.colList[0]}, {self.colList[1]}, {geom_col} FROM "{source_table}" 
+                WHERE "{self.holderAttribute}" IN ({id_list_str})
+            """
+            cur.execute(query)
+
+            cur.execute(f'ALTER TABLE "{target_table}" ADD COLUMN topdown_group REAL;')
+
+            conn.commit()
+
+            cur.execute(f'UPDATE "{target_table}" SET topdown_group = {key};')
+
+            cur.execute(f"""
+                INSERT INTO gpkg_contents (table_name, data_type, identifier, description, last_change, min_x, min_y, max_x, max_y, srs_id)
+                SELECT "{target_table}", data_type, "{target_table}", description, datetime('now'), 
+                    min_x, min_y, max_x, max_y, srs_id
+                FROM gpkg_contents WHERE table_name = "{source_table}"
+            """)
+
+            cur.execute(f"""
+                INSERT INTO gpkg_geometry_columns (table_name, column_name, geometry_type_name, srs_id, z, m)
+                SELECT "{target_table}", column_name, geometry_type_name, srs_id, z, m
+                FROM gpkg_geometry_columns WHERE table_name = "{source_table}"
+            """)
+
+            conn.commit()
+
+            conn.close()
+            return target_table
+
+        except Exception as e:
+            conn.rollback()
+            print(f"Error creating subset: {e}")
+            return False, False
+        finally:
+            conn.close()
+
+    def selectGroupAllCols(self, timeStamp, postfix, fids):
+        gpkg_path, source_table = self.layer
+        conn = sqlite3.connect(gpkg_path)
+        cur = conn.cursor()
+
+        id_list_str = ",".join(map(str, fids))
+
+        target_table = f"{source_table}_{timeStamp}_group_{postfix}"
+        
+        try:
+            cur.execute("BEGIN TRANSACTION;")
+
+            cur.execute(f'PRAGMA table_info("{source_table}")')
+            columns = [f'"{col[1]}"' for col in cur.fetchall() if col[1].lower() != 'fid']
+            column_string = ", ".join(columns)
+
+            cur.execute(f'CREATE TABLE "{target_table}" AS SELECT * FROM "{source_table}" WHERE 1=0;')
+
+            cur.execute(f'ALTER TABLE "{target_table}" ADD COLUMN "topdown_group" REAL;')
+
+            query = f"""
+                INSERT INTO "{target_table}" ({column_string}) 
+                SELECT {column_string} FROM "{source_table}" 
+                WHERE "{self.holderAttribute}" IN ({id_list_str})
+            """
+            cur.execute(query)
+
+            cur.execute(f'UPDATE "{target_table}" SET "topdown_group" = {postfix};')
+
+            cur.execute(f"""
+                INSERT INTO gpkg_contents (table_name, data_type, identifier, description, last_change, min_x, min_y, max_x, max_y, srs_id)
+                SELECT "{target_table}", data_type, "{target_table}", description, datetime('now'), 
+                    min_x, min_y, max_x, max_y, srs_id
+                FROM gpkg_contents WHERE table_name = "{source_table}"
+            """)
+
+            cur.execute(f"""
+                INSERT INTO gpkg_geometry_columns (table_name, column_name, geometry_type_name, srs_id, z, m)
+                SELECT "{target_table}", column_name, geometry_type_name, srs_id, z, m
+                FROM gpkg_geometry_columns WHERE table_name = "{source_table}"
+            """)
+
+            cur.execute(f"SELECT * FROM {target_table};")
+            rows = len(cur.fetchall())
+
+            conn.commit()
+            conn.close()
+            return target_table, rows
+
+        except Exception as e:
+            conn.rollback()
+            print(f"Error creating subset: {e}")
+            return False, False
+        finally:
+            conn.close()
+
 
     def add_groups(self, geopackage, results, context, keyword=None):
         vlayer = QgsVectorLayer(geopackage, "test", "ogr")
@@ -264,9 +501,9 @@ class JustTopDownAlgorithm(QgsProcessingAlgorithm):
             QgsProcessingContext.LayerDetails(vlayer.name(), context.project(), keyword)
             )
 
-    def postProcessAlgorithm(self, context, feedback):
-        delete_shapefiles(self.locked_files)
-        return {}
+    #def postProcessAlgorithm(self, context, feedback):
+    #    delete_shapefiles(self.locked_files)
+    #    return {}
 
 
 def is_r_provider_installed():
@@ -343,103 +580,64 @@ def copyR_script(r_script_path):
             return False   
     return True
 
-def rename_file(layer, new_name):
-    old_path = layer.source().split("|")[0]
+def extendLayerWithGroup(self, layer, group_layer_name, context):
+    gpkg_path, source_table = self.layer
+    conn = sqlite3.connect(gpkg_path)
+    cur = conn.cursor()
 
-    folder = os.path.dirname(old_path)
-    old_base = os.path.splitext(os.path.basename(old_path))[0]
-    extensions = [".shp", ".shx", ".dbf", ".prj", ".cpg"]
-
-    # Remove layer from project
-    QgsProject.instance().removeMapLayer(layer.id())
-
-    layer.setDataSource("", "", "")
-    del layer
-    gc.collect()
-
-    for ext in extensions:
-        old_file = os.path.join(folder, old_base + ext)
-        new_file = os.path.join(folder, new_name + ext)
-        if os.path.exists(old_file):
-            os.rename(old_file, new_file)
-
-    # Reload layer
-    iface.addVectorLayer(
-        os.path.join(folder, new_base + ".shp"),
-        new_base,
-        "ogr"
-
-    )
-
-def remove_layer(layer_id):
-    project = QgsProject.instance()
-    project.removeMapLayer(layer_id)
-
-def merge_to_geopackage(file_list, output_gpkg, context):
-    """
-    Takes a list of file paths and saves them into one GeoPackage.
-    """   
-    for i, file_path in enumerate(file_list):
-        layer = QgsVectorLayer(file_path, str(Path(file_path).stem), "ogr")
+    group_layer_name = group_layer_name.split("|layername=")[1]
         
-        if not layer.isValid():
-            print(f"Skipping invalid layer: {file_path}")
-            continue
+    try:
+        cur.execute(f'PRAGMA table_info("{layer}")')
+        source_columns = [col[1] for col in cur.fetchall()]
 
-        options = QgsVectorFileWriter.SaveVectorOptions()
-        options.driverName = "GPKG"
-        options.layerName = layer.name()
-        
-        if i == 0:
-            options.actionOnExistingFile = QgsVectorFileWriter.CreateOrOverwriteFile
-        else:
-            options.actionOnExistingFile = QgsVectorFileWriter.CreateOrOverwriteLayer
+        cur.execute(f'PRAGMA table_info("{group_layer_name}")')
+        groups_data = cur.fetchall()
+        for col in groups_data:
+            col_name = col[1]
+            col_type = col[2]
+            if col_name.lower() != 'fid' and col_name not in source_columns:
+                cur.execute(f'ALTER TABLE "{layer}" ADD COLUMN "{col_name}" {col_type}')
 
-        merge_result = QgsVectorFileWriter.writeAsVectorFormatV3(
-            layer,
-            output_gpkg,
-            context.transformContext(),
-            options
-        )
-        if merge_result[0] == QgsVectorFileWriter.NoError:
-            try:
-                QgsProject.instance().removeMapLayer(layer.id())
-                layer.setDataSource("", "", "")
-                layer.dataProvider().reloadData()
-                del layer
-                gc.collect()
-                delete_shapefiles([file_path])
-            except Exception as e:
-                print(f"Error cleaning up layer {file_path}: {e}")
-        else:
-            pass
+        cur.execute(f'PRAGMA table_info("{layer}")')
+        final_target_cols = [f'"{col[1]}"' for col in cur.fetchall() if col[1].lower() != 'fid']
         
-def delete_shapefiles(shape_files):
-    project = QgsProject.instance()
-    
-    for shape in shape_files:
-        abs_shape = os.path.abspath(shape)
-        
-        layers_to_remove = [
-            l.id() for l in project.mapLayers().values() 
-            if os.path.abspath(l.source().split("|")[0]) == abs_shape
-        ]
-        if layers_to_remove:
-            project.removeMapLayers(layers_to_remove)
+        col_string = ", ".join(final_target_cols)
 
-        QgsApplication.processEvents()
-        gc.collect()
+        cur.execute(f"""
+            INSERT INTO "{layer}" ({col_string}) 
+            SELECT {col_string} FROM "{group_layer_name}"
+        """)
 
-        print(f"Deleting shapefile: {abs_shape}")
-        
-        success = QgsVectorFileWriter.deleteShapeFile(abs_shape)
-        
-        if not success:
-            try:
-                for ext in ['.shp', '.shx', '.dbf', '.prj', '.cpg', '.qpj']:
-                    part = abs_shape.replace('.shp', ext)
-                    if os.path.exists(part):
-                        os.remove(part)
-                print(f"Manual deletion successful for {abs_shape}")
-            except PermissionError:
-                print(f"CRITICAL: {abs_shape} is still locked by an external process.")
+        conn.commit()
+        conn.close()
+        return True
+
+    except Exception as e:
+        conn.rollback()
+        print(f"Error updating groupLayer: {e}")
+        return False
+    finally:
+        conn.close()
+
+def queryNoneGroupMembers(self, assigned_holders):
+    gpkg_path, source_table = self.layer
+    conn = sqlite3.connect(gpkg_path)
+    cur = conn.cursor()
+
+    try:
+        id_list_str = ",".join(map(str, assigned_holders)) if assigned_holders else "NULL"
+        cur.execute(f"""
+            SELECT "{self.holderAttribute}" FROM "{source_table}"
+            WHERE "{self.holderAttribute}" NOT IN ({id_list_str})
+        """)
+        return [row[0] for row in cur.fetchall()]
+
+    except Exception as e:
+        print(f"Error querying none group members: {e}")
+        return []
+    finally:
+        conn.close()
+
+
+

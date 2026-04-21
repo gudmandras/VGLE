@@ -57,9 +57,9 @@ class PolygonGrouperGPKG(QgsProcessingAlgorithm):
                                                      options=['Neighbours', 'Closer', 'Neighbours, then closer',
                                                               'Closer, then neighbours'],
                                                      allowMultiple=False, defaultValue='Neighbours'))
-        self.addParameter(QgsProcessingParameterEnum('SwapToGet', 'Swap to get',
-                                                     options=['Neighbours'],
-                                                     allowMultiple=False, defaultValue='Neighbours'))
+        #self.addParameter(QgsProcessingParameterEnum('SwapToGet', 'Swap to get',
+        #                                             options=['Neighbours'],
+        #                                             allowMultiple=False, defaultValue='Neighbours'))
         self.algorithmNames = ['Neighbours', 'Closer', "Neighbours, then closer", "Closer, then neighbours"]
         
         onlySelected = QgsProcessingParameterBoolean('OnlySelected', 'Only use the selected features',
@@ -78,7 +78,7 @@ class PolygonGrouperGPKG(QgsProcessingAlgorithm):
         stats = QgsProcessingParameterBoolean('Stats', "Generate statistics", defaultValue=False)
         stats.setFlags(stats.flags() | QgsProcessingParameterDefinition.FlagAdvanced)
         self.addParameter(stats)
-        self.version = '2026-04-15-01'
+        self.version = '2026-04-21-01'
 
     def name(self):
         return 'polygon_grouper_gpkg'
@@ -115,6 +115,10 @@ class PolygonGrouperGPKG(QgsProcessingAlgorithm):
         #ptvsd.debug_this_thread()
         self.counter = 0
         results = {}
+
+        if not vgle_gpkgs.checkTableName(parameters, model_feedback):
+            return {}
+
         self.steps = vgle_utils.calculateSteps(parameters['SwapToGet'])
         feedback = QgsProcessingMultiStepFeedback(self.steps, model_feedback)
         feedback.pushWarning(f"Plugin version: {self.version}\n")
@@ -199,7 +203,7 @@ class PolygonGrouperGPKG(QgsProcessingAlgorithm):
             
             mergedBELayer = vgle_gpkgs.createMergedFileGPKG(self, gpkg_path, tempLayerName, context, feedback)
             _, __ = vgle_gpkgs.calculateTotalDistancesGPKG(self, gpkg_path, mergedBELayer)
-            mergedBETable = vgle_gpkgs.calculateStatDataMergedGPKG(self, gpkg_path, mergedBELayer, self.holderAttribute)
+            mergedBETable = vgle_gpkgs.calculateStatDataMergedGPKG(self, gpkg_path, mergedBELayer, self.holderAttribute, timeStamp)
             vgle_gpkgs.deleteTable(gpkg_path, mergedBELayer)
             vgle_gpkgs.calculateIndexDataGPKG(gpkg_path, indicatorTable, 'BE', mergedBETable)
             vgle_gpkgs.deleteTable(gpkg_path, mergedBETable)
@@ -211,6 +215,7 @@ class PolygonGrouperGPKG(QgsProcessingAlgorithm):
         # Start one of the functions
         self.turn = 0
         self.layer = (gpkg_path, tempLayerName)
+        self.changeLog = vgle_gpkgs.createExchangeLog(self)
         self.actualIdAttribute, self.actualHolderAttribute = copy.copy(self.idAttribute), copy.copy(self.holderAttribute)   
         oneSeedBoolean = vgle_gpkgs.checkSeedNumberGPKG(self, feedback)
         if not oneSeedBoolean:
@@ -235,16 +240,19 @@ class PolygonGrouperGPKG(QgsProcessingAlgorithm):
             vgle_gpkgs.deleteField(gpkg_path, mergedLayer, toDeleteAttr)
 
             if parameters['Stats']:
-                vgle_gpkgs.saveInteractionOutput1GPKG(self, self.algorithmNames[self.algorithmIndex].lower().replace(" ", "_").replace(",", "_"), timeStamp)
-                vgle_gpkgs.saveInteractionOutput2GPKG(self, self.algorithmNames[self.algorithmIndex].lower().replace(" ", "_").replace(",", "_"), timeStamp)
-                vgle_utils.createExchangeLog(self, self.algorithmNames[self.algorithmIndex].lower().replace(" ", "_").replace(",", "_"), timeStamp)
-                
-
+                _, changes = vgle_gpkgs.saveInteractionOutput1GPKG(self)
+                swap_freq_table = vgle_gpkgs.saveInteractionOutput2GPKG(self)               
                 vgle_gpkgs.calculateStatDataGPKG(self, gpkg_path, tempLayerName, indicatorTable, 'AE', self.actualHolderAttribute)
                 _, __ = vgle_gpkgs.calculateTotalDistancesGPKG(self, gpkg_path, mergedLayer)
-                mergedAETable = vgle_gpkgs.calculateStatDataMergedGPKG(self, gpkg_path, mergedLayer, self.actualHolderAttribute)
-                vgle_gpkgs.calculateIndexDataGPKG(gpkg_path, indicatorTable, 'CH', mergedAETable)
+                mergedAETable = vgle_gpkgs.calculateStatDataMergedGPKG(self, gpkg_path, mergedLayer, self.actualHolderAttribute, timeStamp)
+                vgle_gpkgs.calculateIndexDataGPKG(gpkg_path, indicatorTable, 'AE', mergedAETable)
+                vgle_gpkgs.calculateIndexDifferencesGPKG(self, gpkg_path, tempLayerName, indicatorTable, changes)
+                #vgle_gpkgs.calculateIndexDataGPKG(gpkg_path, indicatorTable, 'CH', mergedAETable)
                 vgle_gpkgs.deleteTable(gpkg_path, mergedAETable)
+
+                results['SWAP_FREQ_TABLE'] = swap_freq_table
+
+            vgle_gpkgs.deleteTable(gpkg_path, self.distanceMatrixTable)
 
             #gpkg_path, layer_name = self.layer
             #cleaned_name = layer_name.replace('"', '').replace("'", '').strip()
@@ -272,15 +280,22 @@ class PolygonGrouperGPKG(QgsProcessingAlgorithm):
 
             feedback.setCurrentStep(self.steps)
             vgle_utils.endLogging()   
-            results['OUTPUT'] = swapedLayer
-            results['MERGED'] = mergedLayer
+            results['OUTPUT'] = f'{gpkg_path}|layername={tempLayerName}'
+            results['CLOG'] =  f'{gpkg_path}|layername={self.changeLog}'
+            results['MERGED'] = f'{gpkg_path}|layername={mergedLayer}'
             return results
         else:
+            vgle_gpkgs.deleteTable(gpkg_path, self.distanceMatrixTable)
+            swappedLayer = f'{gpkg_path}|layername={tempLayerName}'
+            mergedLayer = f'{gpkg_path}|layername={vgle_gpkgs.createMergedFileGPKG(self, gpkg_path, tempLayerName, context, feedback)}'
+
             if self.strictHDI or self.strictHFI:
                 feedback.pushInfo('No change was made, probably due to the too strict conditions (HDI or HFI)! Try to disable these parameters and run again.') 
             elif self.counter == 0:
                 feedback.pushInfo('No change was made! Try to modify the parameters and run again.') 
             else:
                 feedback.reportError('Something went wrong, no change was made! See log for more details.')
-            vgle_utils.endLogging()   
-            return {}
+            vgle_utils.endLogging()
+            results['OUTPUT'] = swappedLayer
+            results['MERGED'] = mergedLayer
+            return results 

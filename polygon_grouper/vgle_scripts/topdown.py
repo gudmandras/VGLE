@@ -258,7 +258,7 @@ class TopDownAlgorithm(QgsProcessingAlgorithm):
                         'Stats': False
                     }, context=context, feedback=feedback, is_child_algorithm=True)
             except Exception as e:
-                feedback.pushError(f"Error processing group {key}: {e}")
+                feedback.reportError(f"Error processing group {key}: {e}")
                 self.permanent_data['layer'] = vgle_utils.checkVectorLayer(self.permanent_data['layer'], self.backup_data['tempLayer'])
                 self.selectGroup(group, self.permanent_data['layer'], self.holderAttribute, context, key)
                 if parameters['Preference']:

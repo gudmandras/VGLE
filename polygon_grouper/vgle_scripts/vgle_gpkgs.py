@@ -26,6 +26,45 @@ from . import vgle_layers, vgle_utils
 MAXCOMBTURN = 1000
 MAXCANDIDATES = 5
 
+def checkTableName(parameters, feedback):
+    allowed_pattern = re.compile(r"^[A-Za-z0-9_]+$")
+
+    if not allowed_pattern.match(parameters['BalancedByField']):
+            feedback.reportError(f"Invalid field name: {parameters['BalancedByField']}")
+            return False
+
+    for field in parameters['AssignedByField']:
+        if not allowed_pattern.match(field):
+            feedback.reportError(f"Invalid field name: {field}")
+            return False
+
+    return True
+
+def checkSwapFreq(swap_layer):
+    required_fields = {"from", "to", "weight"}
+    uri = swap_layer.dataProvider().dataSourceUri()
+    try:
+        gpkg_path, source_layer_name = uri.split("|layername=")
+    except ValueError:
+        gpkg_path = uri
+
+    if gpkg_path[-4:].lower() != 'gpkg' and os.path.splitext(gpkg_path)[1][:5].lower() != '.gpkg':
+        return False
+
+    conn = sqlite3.connect(gpkg_path)
+    cur = conn.cursor()
+
+    cur.execute(f'PRAGMA table_info("{source_layer_name}")')
+    columns = cur.fetchall()
+
+    conn.close()
+
+    for field in required_fields:
+        if field not in [col[1] for col in columns]:
+            return False
+
+    return uri, source_layer_name
+
 def connectToDB(gpkg_path):
     conn = sqlite3.connect(gpkg_path)
     conn.execute("PRAGMA journal_mode=WAL;")
@@ -43,7 +82,7 @@ def createTempLayerIntoGPKG(layer, postfix, timeStamp, feedback):
         gpkg_path = uri
         source_layer_name = getFirstLayerFromGPKG(gpkg_path)
         if not source_layer_name:
-            feedback.pushError("No feature layers found in the GPKG.")
+            feedback.reportError("No feature layers found in the GPKG.")
             return None, None
 
     target_layer_name = f"{str(source_layer_name)}_{postfix}_{timeStamp}"
@@ -304,9 +343,9 @@ def createStatTableGPKG(self, gpkg_path, layer_name):
             "AE # of polygons (HFI)" INTEGER,
             "AE Sum balancing value (PFI)" REAL,
             "AE Distance (m) (HDI)" REAL,
-            "Dif # of polygons (HFI)" REAL,
-            "Dif Sum balancing value (PFI)" REAL,
-            "Dif Distance (m) (HDI)" REAL,
+            "CH # of polygons (HFI)" REAL,
+            "CH Sum balancing value (PFI)" REAL,
+            "CH Distance (m) (HDI)" REAL,
             "AE HFI" REAL,
             "AE PFI" REAL,
             "AE HDI" REAL,
@@ -834,8 +873,8 @@ def calculateStatDataGPKG(self,  gpkg_path, layer_name, stat_layer_name, prefix,
     cur.execute(f"""
         UPDATE "{stat_layer_name}" AS s
         SET
-            "{prefix} # of parcels (HFI)" = COALESCE(stats.ParcelNumber, 0),
-            "{prefix} Total Area (ha) (PFI)" = COALESCE(stats.TotalArea, 0),
+            "{prefix} # of polygons (HFI)" = COALESCE(stats.ParcelNumber, 0),
+            "{prefix} Sum balancing value (PFI)" = COALESCE(stats.TotalArea, 0),
             "{prefix} Distance (m) (HDI)" = COALESCE(
                 CASE WHEN stats.ParcelNumber = 0 THEN 0
                      ELSE stats.TotalDistance / stats.ParcelNumber
@@ -856,10 +895,10 @@ def calculateStatDataGPKG(self,  gpkg_path, layer_name, stat_layer_name, prefix,
     conn.commit()
     conn.close()
 
-def calculateStatDataMergedGPKG(self, gpkg_path, layer, fieldName):
+def calculateStatDataMergedGPKG(self, gpkg_path, layer, fieldName, timestamp):
     conn = sqlite3.connect(gpkg_path)
     cur = conn.cursor()
-    table_name = "temp_data"
+    table_name = f"temp_data_{timestamp}"
 
     cur.execute(f'DROP TABLE IF EXISTS "{table_name}"')
 
@@ -913,14 +952,14 @@ def calculateIndexDataGPKG(gpkg_path, stat_layer_name, prefix, temp_layer):
         SET
             "{prefix} HFI" = 
                 CASE 
-                    WHEN s."{prefix} # of parcels (HFI)" = 0 THEN 0
-                    ELSE (1 - (t.ParcelNumber / s."{prefix} # of parcels (HFI)")) * 100
+                    WHEN s."{prefix} # of polygons (HFI)" = 0 THEN 0
+                    ELSE (1 - (t.ParcelNumber / s."{prefix} # of polygons (HFI)")) * 100
                 END,
 
             "{prefix} PFI" =
                 CASE 
-                    WHEN s."{prefix} # of parcels (HFI)" = 0 THEN 0
-                    ELSE ROUND(s."{prefix} Total Area (ha) (PFI)" / s."{prefix} # of parcels (HFI)", 3)
+                    WHEN s."{prefix} # of polygons (HFI)" = 0 THEN 0
+                    ELSE ROUND(s."{prefix} Sum balancing value (PFI)" / s."{prefix} # of polygons (HFI)", 3)
                 END,
 
             "{prefix} HDI" =
@@ -932,6 +971,49 @@ def calculateIndexDataGPKG(gpkg_path, stat_layer_name, prefix, temp_layer):
         FROM "{temp_layer}" t
         WHERE s."Holder ID" = t."Holder ID"
     """)
+
+    conn.commit()
+    conn.close()
+
+def calculateIndexDifferencesGPKG(self, gpkg_path, temp_layer, stat_layer_name, changes):
+    conn = sqlite3.connect(gpkg_path)
+    cur = conn.cursor()
+
+    cur.execute(f"""
+        UPDATE "{stat_layer_name}" AS s
+        SET
+            "CH # of polygons (HFI)" = ABS(s."BE # of polygons (HFI)" - s."AE # of polygons (HFI)"),
+            "CH Sum balancing value (PFI)" = ABS(s."BE Sum balancing value (PFI)" - s."AE Sum balancing value (PFI)"),
+            "CH Distance (m) (HDI)" = ABS(s."BE Distance (m) (HDI)" - s."AE Distance (m) (HDI)")
+
+        FROM "{temp_layer}" t
+        WHERE s."Holder ID" = t."{self.holderAttribute}"
+    """)
+    conn.commit()
+
+    cur.execute(f"""
+        UPDATE "{stat_layer_name}"
+        SET
+            "CH HFI" = CASE
+                WHEN "BE # of polygons (HFI)" = 0 THEN 0
+                ELSE ("CH # of polygons (HFI)" / "BE # of polygons (HFI)") * 100
+            END,
+            "CH PFI" = CASE
+                WHEN "BE Sum balancing value (PFI)" = 0 THEN 0
+                ELSE ("CH Sum balancing value (PFI)" / "BE Sum balancing value (PFI)") * 100
+            END,
+            "CH HDI" = CASE
+                WHEN "BE Distance (m) (HDI)" = 0 THEN 0
+                ELSE ("CH Distance (m) (HDI)" / "BE Distance (m) (HDI)") * 100
+            END
+    """)
+
+
+    cur.executemany(f"""
+        UPDATE "{stat_layer_name}"
+        SET "Change num" = ?
+        WHERE "Holder ID" = ?
+    """, [(v, k) for k, v in changes.items()])
 
     conn.commit()
     conn.close()
@@ -1009,8 +1091,6 @@ def setTurnAttributesGPKG(self, connection=False):
     return newId, newHolder
 
 def calculateNeighboursGPKG(self, feedback, context=None):
-    #import ptvsd
-    #ptvsd.debug_this_thread()
     gpkg_path, layer_name = self.layer
     conn = sqlite3.connect(gpkg_path)
     conn.enable_load_extension(True)
@@ -1369,16 +1449,44 @@ def update_seedsGPKG(self, holdingId, connection=False):
     if not connection:
         conn.close()
 
+def update_changeLogGPKG(self, holder, neighbourHolder, holderCombinationForChange, neighbourCombinationForChange, connection=False):
+    gpkg_path, layer_name = self.layer
+    if not connection:
+        conn = sqlite3.connect(gpkg_path)
+    else:
+        conn = connection
+    cur = conn.cursor()
+
+    cur.execute(f"""
+        INSERT INTO "{self.changeLog}" (
+            "Change_ID",
+            "Get_from_holder_ID",
+            "Get_from_polygon_ID",
+            "Transfer_to_holder_ID",
+            "Transfer_to_polygon_ID"
+        ) VALUES (?, ?, ?, ?, ?)
+    """, (
+        self.counter,
+        holder,
+        ",".join(map(str, holderCombinationForChange)),
+        neighbourHolder,
+        ",".join(map(str, neighbourCombinationForChange))
+    ))
+
+    conn.commit()
+    if not connection:
+        conn.close()
+
 def update_holdersHoldingsNumberGPKG(self, holder, targetHolder, holderCombinationForChange, targetCombinationForChange):
     self.holdersHoldingNumber[holder] += len(targetCombinationForChange) - len(holderCombinationForChange)
     self.holdersHoldingNumber[targetHolder] += len(holderCombinationForChange) - len(targetCombinationForChange)
 
-def saveInteractionOutput1GPKG(self, postfix, timeStamp):
+def saveInteractionOutput1GPKG(self):
     gpkg_path, layer_name = self.layer
     conn = sqlite3.connect(gpkg_path)
     cur = conn.cursor()
 
-    output_table = f"{layer_name}_{postfix}_{timeStamp}_exchange_frequency"
+    output_table = f"{layer_name}_exchange_frequency"
 
     cur.execute(f'DROP TABLE IF EXISTS "{output_table}"')
     cur.execute("DELETE FROM gpkg_contents WHERE table_name = ?", (output_table,))
@@ -1401,38 +1509,37 @@ def saveInteractionOutput1GPKG(self, postfix, timeStamp):
     holders = list(self.holdersWithHoldings.keys())
     holders.sort()
 
-    interactionTable = {}     
+    interactionTable = {}   
     for holder in holders:
-        interactionTable[holder] = {}
+        if holder not in interactionTable:
+            interactionTable[holder] = {}
+        fromHolderHoldings = beforeHoldersWithHoldings[holder]
         for holderAgain in holders:
-            exchangeNum = 0
-            fromHolderHoldings = beforeHoldersWithHoldings[holder]
-            toHolderHoldings = afterHoldersWithHoldings[holderAgain]
-            for holding in fromHolderHoldings:
-                if holding in toHolderHoldings:
-                    exchangeNum += 1
-            interactionTable[holder][holderAgain] = exchangeNum
+            if holderAgain not in interactionTable:
+                interactionTable[holderAgain] = {}
+            if holder != holderAgain:
+                exchangeNum = 0
+                toHolderHoldings = afterHoldersWithHoldings[holderAgain]
+                diff = len(fromHolderHoldings) - len(list(set(fromHolderHoldings) - set(toHolderHoldings)))
+                exchangeNum = diff
+                interactionTable[holder][holderAgain] = exchangeNum
+
+    changes = {}
+    for holder, holderList in interactionTable.items():
+        changeValue = sum([interactionTable[holder][holderAgain] for holderAgain in holderList])
+        changes[holder] = changeValue
 
     fromList = []
     toList = []
     weightList = []
     for holder in holders:
         for holderAgain in holders:
+            if holder == holderAgain:
+                continue
             interactionNum = interactionTable[holder][holderAgain]
             if interactionNum != 0:
-                if self.holderAttributeType == 10:
-                    fromAttribute = holder
-                    toAttribute = holderAgain
-                else:
-                    if int(holder) > int(holderAgain):
-                        fromAttribute = holder
-                        toAttribute = holderAgain
-                    elif int(holder) < int(holderAgain):
-                        fromAttribute = holderAgain
-                        toAttribute = holder
-                    else:
-                        fromAttribute = None
-                        toAttribute = None
+                fromAttribute = holder
+                toAttribute = holderAgain
                 if fromAttribute and toAttribute:
                     if fromAttribute in fromList:
                         if toAttribute in toList:
@@ -1456,15 +1563,15 @@ def saveInteractionOutput1GPKG(self, postfix, timeStamp):
     conn.commit()
     conn.close()
 
-    return output_table
+    return output_table, changes
 
 
-def saveInteractionOutput2GPKG(self, postfix, timeStamp):
+def saveInteractionOutput2GPKG(self):
     gpkg_path, layer_name = self.layer
     conn = sqlite3.connect(gpkg_path)
     cur = conn.cursor()
 
-    output_table = f"{layer_name}_{postfix}_{timeStamp}_swap_frequency"
+    output_table = f"{layer_name}_swap_frequency"
 
     cur.execute(f'DROP TABLE IF EXISTS "{output_table}"')
     cur.execute("DELETE FROM gpkg_contents WHERE table_name = ?", (output_table,))
@@ -1492,19 +1599,8 @@ def saveInteractionOutput2GPKG(self, postfix, timeStamp):
         for holderAgain in holders:
             interactionNum = self.interactionTable[holder][holderAgain]
             if interactionNum != 0:
-                if self.holderAttributeType == 10:
-                    fromAttribute = holder
-                    toAttribute = holderAgain
-                else:
-                    if int(holder) > int(holderAgain):
-                        fromAttribute = holder
-                        toAttribute = holderAgain
-                    elif int(holder) < int(holderAgain):
-                        fromAttribute = holderAgain
-                        toAttribute = holder
-                    else:
-                        fromAttribute = None
-                        toAttribute = None
+                fromAttribute = holder
+                toAttribute = holderAgain
                 if fromAttribute and toAttribute:
                     if fromAttribute in fromList:
                         if toAttribute in toList:
@@ -1530,57 +1626,36 @@ def saveInteractionOutput2GPKG(self, postfix, timeStamp):
 
     return output_table
 
-def createExchangeLog(self, postfix, timeStamp):
+def createExchangeLog(self):
     gpkg_path, layer_name = self.layer
     conn = sqlite3.connect(gpkg_path)
     cur = conn.cursor()
 
-    output_table = f"{layer_name}_{postfix}_{timeStamp}_change_log"
+    output_table = f"{layer_name}_change_log"
 
     cur.execute(f'DROP TABLE IF EXISTS "{output_table}"')
     cur.execute("DELETE FROM gpkg_contents WHERE table_name = ?", (output_table,))
 
     cur.execute(f"""
             CREATE TABLE "{output_table}" (
-                "Number" INTEGER,
-                "Holder ID" TEXT,
-                "Get from parcel ID" TEXT,
-                "Get from land holder ID" TEXT,
-                "Transfer to parcel ID" TEXT,
-                "Transfer to land holder ID" TEXT,
-                "Not changed parcel ID" TEXT
+                "Change_ID" INTEGER,
+                "Get_from_holder_ID" TEXT,
+                "Get_from_polygon_ID" TEXT,
+                "Transfer_to_holder_ID" TEXT,
+                "Transfer_to_polygon_ID" TEXT
             )
         """)
     
     cur.execute("""
         INSERT INTO gpkg_contents (table_name, data_type, identifier, description)
-        VALUES (?, 'attributes', ?, 'Interaction log')
+        VALUES (?, 'attributes', ?, 'Change log')
     """, (output_table, output_table))
     
-    beforeHoldersWithHoldings, _ = getHoldersHoldingsGPKG(gpkg_path, layer_name, self.holderAttribute, self.idAttribute)
-    afterHoldersWithHoldings, _ = getHoldersHoldingsGPKG(gpkg_path, layer_name, self.actualHolderAttribute, self.idAttribute)
-    
-
-    rows = []
-    counter = 0
-    for turn, holder in enumerate(list(beforeHoldersWithHoldings.keys())):
-        beforeHoldings = beforeHoldersWithHoldings[holder]
-        afterHoldings = afterHoldersWithHoldings[holder]
-
-        notChanged = [hold for hold in beforeHoldings if hold in afterHoldings]
-        received = [hold for hold in afterHoldings if hold not in beforeHoldings]
-        donated = [hold for hold in beforeHoldings if hold not in afterHoldings]
-
-        rows.append((counter, holder, ",".join(donated), ",".join([queryHolder(self, hold) for hold in donated]), ",".join(received), ",".join([queryHolder(self, hold) for hold in received]), ",".join(notChanged)))
-        counter += 1
-
-    cur.executemany(f"""
-        INSERT INTO "{output_table}" ("Number", "Holder ID", "Get from parcel ID", "Get from land holder ID", "Transfer to parcel ID", "Transfer to land holder ID", "Not changed parcel ID")
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-    """, rows)
 
     conn.commit()
     conn.close()
+
+    return output_table
 
 def maxDistance(self, seed, featureIds):
     """
@@ -1792,6 +1867,7 @@ def neighboursGPKG(self, feedback, totalAreas=None, context=None):
                             self.interactionTable[neighbourHolder][holder] += 1    
                         update_distancesGPKG(self, connection)
                         update_seedsGPKG(self, nghID, connection)
+                        update_changeLogGPKG(self, holder, neighbourHolder, holderCombinationForChange, neighbourCombinationForChange, connection)
                         update_holdersHoldingsNumberGPKG(self,  holder, neighbourHolder, holderCombinationForChange, neighbourCombinationForChange)
                         commitMessage = f'Change {self.counter} for {neighbourCombinationForChange} (holder:{neighbourHolder}) to get neighbour of {seed} (holder:{holder}): ' \
                                         f'{holderCombinationForChange} for {neighbourCombinationForChange}'
@@ -1996,6 +2072,8 @@ def closerGPKG(self, feedback, totalAreas=None, context=None):
                         self.interactionTable[holder][targetHolder] += 1
                         self.interactionTable[targetHolder][holder] += 1    
                     update_distancesGPKG(self, connection)
+                    update_changeLogGPKG(self, holder, targetHolder, changeHolderCombination, changeTargetCombination, connection)
+                    update_holdersHoldingsNumberGPKG(self,  holder, targetHolder, changeHolderCombination, changeTargetCombination)
                     commitMessage = f'Change {self.counter} for {changeTargetCombination} (holder:{targetHolder}) to get closer to {seed} (holder:{holder}): ' \
                                     f'{changeHolderCombination} for {changeTargetCombination}'
                     logging.debug(commitMessage)
