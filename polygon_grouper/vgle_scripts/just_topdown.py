@@ -226,7 +226,8 @@ class JustTopDownAlgorithm(QgsProcessingAlgorithm):
                     'StrictHDI': parameters['StrictHDI'],
                     'StrictHFI': parameters['StrictHFI'],
                     'Simply': parameters['Simply'],
-                    'Stats': False
+                    'Stats': False,
+                    'IS_CHILD': True
                 }, context=context, feedback=feedback, is_child_algorithm=True)
             feedback.setCurrentStep(counter)
             feedback.pushInfo(f'Group {key} processing finished!')
@@ -236,20 +237,31 @@ class JustTopDownAlgorithm(QgsProcessingAlgorithm):
             vgle_gpkgs.deleteTable(gpkg_path, group_table)
 
 
-        #layer1 = QgsVectorLayer(outpath_1, f"topdown_groups_{ddate}", "ogr")
-        #layer2 = QgsVectorLayer(outpath_2, f"topdown_groups_merged_{ddate}", "ogr")
-
         for swapped_uri, merged_uri in group_paths.values():
             gpkg, swapped = swapped_uri.split("|layername=")
             vgle_gpkgs.deleteTable(gpkg, swapped)
             gpkg, merged = merged_uri.split("|layername=")
             vgle_gpkgs.deleteTable(gpkg, merged)
 
+        
+        cleaned_name = topdownGroupsLayer.replace('"', '').replace("'", '').strip()
+        uri = f'{gpkg_path}|layername={cleaned_name}'
+        feedback.pushInfo(f"URI: {uri}")
+        context.addLayerToLoadOnCompletion(
+            uri,
+            QgsProcessingContext.LayerDetails(topdownGroupsLayer, context.project())
+        )
+
+        cleaned_name = topdownGroupsLayerMerged.replace('"', '').replace("'", '').strip()
+        uri = f'{gpkg_path}|layername={cleaned_name}'
+        feedback.pushInfo(f"URI: {uri}")
+        context.addLayerToLoadOnCompletion(
+            uri,
+            QgsProcessingContext.LayerDetails(topdownGroupsLayerMerged, context.project())
+        )
 
         results['OUTPUT'] = topdownGroupsLayer
         results['MERGED'] = topdownGroupsLayerMerged
-        #self.add_groups(outpath_1, results, context, keyword='OUTPUT')
-        #self.add_groups(outpath_2, results, context, keyword='MERGED')
 
         return results
 
@@ -314,62 +326,6 @@ class JustTopDownAlgorithm(QgsProcessingAlgorithm):
             conn.close()
 
     def createEmptyGroup(self, timeStamp, key, postfix, fids):
-        gpkg_path, source_table = self.layer
-        conn = sqlite3.connect(gpkg_path)
-        cur = conn.cursor()
-
-        id_list_str = ",".join(map(str, fids))
-
-        target_table = f"{source_table}_{timeStamp}_group_{postfix}"
-        
-        try:
-            cur.execute("BEGIN TRANSACTION;")
-
-            cur.execute(f"SELECT column_name FROM gpkg_geometry_columns WHERE table_name = '{source_table}';")
-
-            geom_col = cur.fetchone()[0]
-
-            cur.execute(f'CREATE TABLE "{target_table}" AS SELECT {self.colList[0]}, {self.colList[1]}, {geom_col} FROM "{source_table}" WHERE 1=0;')
-
-            #query = f"""
-            #    INSERT INTO "{target_table}" ({self.colList[0]}, {self.colList[1]}, {geom_col}) 
-            #    SELECT {self.colList[0]}, {self.colList[1]}, {geom_col} FROM "{source_table}" 
-            #    WHERE "{self.holderAttribute}" IN ({id_list_str})
-            #"""
-            #cur.execute(query)
-
-            cur.execute(f'ALTER TABLE "{target_table}" ADD COLUMN topdown_group REAL;')
-
-            conn.commit()
-
-            cur.execute(f'UPDATE "{target_table}" SET topdown_group = {key};')
-
-            cur.execute(f"""
-                INSERT INTO gpkg_contents (table_name, data_type, identifier, description, last_change, min_x, min_y, max_x, max_y, srs_id)
-                SELECT "{target_table}", data_type, "{target_table}", description, datetime('now'), 
-                    min_x, min_y, max_x, max_y, srs_id
-                FROM gpkg_contents WHERE table_name = "{source_table}"
-            """)
-
-            cur.execute(f"""
-                INSERT INTO gpkg_geometry_columns (table_name, column_name, geometry_type_name, srs_id, z, m)
-                SELECT "{target_table}", column_name, geometry_type_name, srs_id, z, m
-                FROM gpkg_geometry_columns WHERE table_name = "{source_table}"
-            """)
-
-            conn.commit()
-
-            conn.close()
-            return target_table
-
-        except Exception as e:
-            conn.rollback()
-            print(f"Error creating subset: {e}")
-            return False, False
-        finally:
-            conn.close()
-
-    def createCopyTable():
         gpkg_path, source_table = self.layer
         conn = sqlite3.connect(gpkg_path)
         cur = conn.cursor()
@@ -580,12 +536,12 @@ def copyR_script(r_script_path):
             return False   
     return True
 
-def extendLayerWithGroup(self, layer, group_layer_name, context):
+def extendLayerWithGroup(self, layer, group_layer_path, context):
     gpkg_path, source_table = self.layer
     conn = sqlite3.connect(gpkg_path)
     cur = conn.cursor()
 
-    group_layer_name = group_layer_name.split("|layername=")[1]
+    group_layer_name = group_layer_path.split("|layername=")[1]
         
     try:
         cur.execute(f'PRAGMA table_info("{layer}")')

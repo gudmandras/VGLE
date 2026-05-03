@@ -212,7 +212,7 @@ def setHolderFieldGPKG(gpkg_path, layer_name, attributes, holder_field='holder_i
         print(f'SQL: CREATE INDEX IF NOT EXISTS idx_{layer_name}_{attributes[0]} ON "{layer_name}" ("{attributes[0]}"')
 
         cur.execute(f'''
-            CREATE INDEX IF NOT EXISTS idx_{layer_name}_{attributes[0]}
+            CREATE INDEX IF NOT EXISTS "idx_{layer_name}_{attributes[0]}"
             ON "{layer_name}" ("{attributes[0]}")
         ''')
 
@@ -253,6 +253,20 @@ def createIdFieldGPKG(gpkg_path, layer_name):
     conn.close()
 
     return new_field
+
+def copyFieldGPKG(self, source_field, target_field):
+    gpkg_path, layer_name = self.layer
+    conn = sqlite3.connect(gpkg_path)
+    cur = conn.cursor()
+
+    cur.execute(f'''
+        UPDATE "{layer_name}"
+        SET "{target_field}" = "{source_field}"
+    ''')
+
+    conn.commit()
+    conn.close()
+
 
 def saveDistanceMatrix(gpkg_path, layer_name, matrix):
     conn = sqlite3.connect(gpkg_path)
@@ -516,6 +530,29 @@ def deleteField(gpkg_path, layer_name, field_names):
         if field_name in columns:
             try:
                 cur.execute(f'ALTER TABLE "{layer_name}" DROP COLUMN {field_name}')
+            except sqlite3.OperationalError:
+                pass
+
+    conn.commit()
+    conn.close()
+
+def deleteIndexes(gpkg_path, layer_name):
+    conn = sqlite3.connect(gpkg_path)
+    cur = conn.cursor()
+
+    cur.execute("""
+        SELECT name
+        FROM sqlite_master
+        WHERE type = 'index'
+        AND tbl_name = ?
+    """, (layer_name,))
+
+    indexes = [row[0] for row in cur.fetchall()]
+
+    for idx in indexes:
+        if idx.startswith("idx_"):
+            try:
+                cur.execute(f'DROP INDEX IF EXISTS "{idx}"')
             except sqlite3.OperationalError:
                 pass
 
@@ -1892,6 +1929,8 @@ def neighboursGPKG(self, feedback, totalAreas=None, context=None):
                     return None, None
                 elif self.algorithmIndex == 2:
                     # Continue with the next method, clear the turn attributes
+                    gpkg_path, _ = self.layer
+                    deleteTable(gpkg_path, neighbours)
                     return True, holdersLocalTotalArea
         elif maxTurn == 0:
             # Max turn reached, stop the algorithm
@@ -2004,10 +2043,11 @@ def closerGPKG(self, feedback, totalAreas=None, context=None):
                             break
 
                         # Polygon number condition
-                        #holderNewHoldignNum = self.holdersHoldingNumber[holder] - len(holderCombination) + len(targetCombination)
-                        #targetNewHoldingNum = self.holdersHoldingNumber[targetHolder] - len(targetCombination) + len(holderCombination)
-                        #if not holderNewHoldignNum <= self.holdersHoldingNumber[holder] or not targetNewHoldingNum <= self.holdersHoldingNumber[targetHolder]:
-                        #    continue    
+                        if self.strictHFI:
+                            holderNewHoldignNum = self.holdersHoldingNumber[holder] - len(holderCombination) + len(targetCombination)
+                            targetNewHoldingNum = self.holdersHoldingNumber[targetHolder] - len(targetCombination) + len(holderCombination)
+                            if not holderNewHoldignNum <= self.holdersHoldingNumber[holder] or not targetNewHoldingNum <= self.holdersHoldingNumber[targetHolder]:
+                                continue    
 
                         # Base condition: weight    
                         temporaryHolderArea = vgle_utils.calculateCombinationArea(self, holderCombination)       

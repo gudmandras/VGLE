@@ -69,16 +69,21 @@ class PolygonGrouperGPKG(QgsProcessingAlgorithm):
         single = QgsProcessingParameterBoolean('Single', "Use single holding's holders polygons", defaultValue=False)
         single.setFlags(single.flags() | QgsProcessingParameterDefinition.FlagAdvanced)
         self.addParameter(single)
-        strict = QgsProcessingParameterBoolean('StrictHDI', "Strict condition on Holding Distance Indicator (HDI)", defaultValue=False)
+        strict = QgsProcessingParameterBoolean('StrictHDI', "Strict condition on polygons distances per holder", defaultValue=False)
         strict.setFlags(strict.flags() | QgsProcessingParameterDefinition.FlagAdvanced)
         self.addParameter(strict)
-        strict2 = QgsProcessingParameterBoolean('StrictHFI', "Strict condition on Holding Fragmentation Indicator (HFI)", defaultValue=False)
+        strict2 = QgsProcessingParameterBoolean('StrictHFI', "Strict condition on polygons number per holder", defaultValue=False)
         strict2.setFlags(strict2.flags() | QgsProcessingParameterDefinition.FlagAdvanced)
         self.addParameter(strict2)
         stats = QgsProcessingParameterBoolean('Stats', "Generate statistics", defaultValue=False)
         stats.setFlags(stats.flags() | QgsProcessingParameterDefinition.FlagAdvanced)
         self.addParameter(stats)
-        self.version = '2026-04-21-01'
+
+        child = QgsProcessingParameterBoolean('IS_CHILD', '', defaultValue=False)
+        child.setFlags(child.flags() | QgsProcessingParameterDefinition.FlagHidden)
+        self.addParameter(child)
+
+        self.version = '2026-05-03-01'
 
     def name(self):
         return 'polygon_grouper_gpkg'
@@ -144,6 +149,7 @@ class PolygonGrouperGPKG(QgsProcessingAlgorithm):
         self.stats = parameters['Stats']
         parameters['Simply'] = True
         self.simply = parameters['Simply']
+        self.child = parameters['IS_CHILD']
 
         filePath = self.parameterAsVectorLayer(parameters, 'Inputlayer', context).source()
         directory = os.path.dirname(filePath)
@@ -234,6 +240,8 @@ class PolygonGrouperGPKG(QgsProcessingAlgorithm):
 
         if swapedLayer:
             feedback.setCurrentStep(self.steps-1)
+            if len(parameters["AssignedByField"]) == 1:
+                vgle_gpkgs.copyFieldGPKG(self, self.actualHolderAttribute, parameters["AssignedByField"][0])
             mergedLayer = vgle_gpkgs.createMergedFileGPKG(self, gpkg_path, tempLayerName, context, feedback)
             toDeleteAttr = [attr for attr in vgle_gpkgs.getFieldNamesGPKG(gpkg_path, mergedLayer)
                             if attr not in vgle_layers.getAttributesNames(self.parameterAsVectorLayer(parameters, 'Inputlayer', context)) and attr not in [self.idAttribute, 'seed_flag', 'geom']]
@@ -253,27 +261,26 @@ class PolygonGrouperGPKG(QgsProcessingAlgorithm):
                 results['SWAP_FREQ_TABLE'] = swap_freq_table
 
             vgle_gpkgs.deleteTable(gpkg_path, self.distanceMatrixTable)
+            vgle_gpkgs.deleteIndexes(self.layer[0], self.layer[1])
+            vgle_gpkgs.deleteIndexes(self.layer[0], mergedLayer)
 
-            #gpkg_path, layer_name = self.layer
-            #cleaned_name = layer_name.replace('"', '').replace("'", '').strip()
-            #uri = f'{gpkg_path}|layername={cleaned_name}'
-            #feedback.pushInfo(f"URI: {uri}")
-            #context.addLayerToLoadOnCompletion(
-            #    uri,
-            #    QgsProcessingContext.LayerDetails(layer_name, context.project())
-            #)
+            if not self.child:
+                gpkg_path, layer_name = self.layer
+                cleaned_name = layer_name.replace('"', '').replace("'", '').strip()
+                uri = f'{gpkg_path}|layername={cleaned_name}'
+                feedback.pushInfo(f"URI: {uri}")
+                context.addLayerToLoadOnCompletion(
+                    uri,
+                    QgsProcessingContext.LayerDetails(layer_name, context.project())
+                )
 
-            #mergedLayer = layer_name.replace('"', '').replace("'", '').strip()
-            #uri = f'{gpkg_path}|layername={cleaned_name}'
-            #feedback.pushInfo(f"URI: {uri}")
-            #context.addLayerToLoadOnCompletion(
-            #    uri,
-            #    QgsProcessingContext.LayerDetails(mergedLayer, context.project())
-            #)
-
-                
-            #vgle_layers.copyStyle(self, self.parameterAsVectorLayer(parameters, 'Inputlayer', context), swapedLayer)
-            #vgle_layers.copyStyle(self, self.parameterAsVectorLayer(parameters, 'Inputlayer', context), mergedLayer)
+                cleaned_name = mergedLayer.replace('"', '').replace("'", '').strip()
+                uri = f'{gpkg_path}|layername={cleaned_name}'
+                feedback.pushInfo(f"URI: {uri}")
+                context.addLayerToLoadOnCompletion(
+                    uri,
+                    QgsProcessingContext.LayerDetails(mergedLayer, context.project())
+                )
 
             mainEndTime = time.time()
             logging.debug(f'Script time:{mainEndTime-mainStartTime}')
@@ -285,9 +292,13 @@ class PolygonGrouperGPKG(QgsProcessingAlgorithm):
             results['MERGED'] = f'{gpkg_path}|layername={mergedLayer}'
             return results
         else:
-            vgle_gpkgs.deleteTable(gpkg_path, self.distanceMatrixTable)
             swappedLayer = f'{gpkg_path}|layername={tempLayerName}'
-            mergedLayer = f'{gpkg_path}|layername={vgle_gpkgs.createMergedFileGPKG(self, gpkg_path, tempLayerName, context, feedback)}'
+            mergedLayer = vgle_gpkgs.createMergedFileGPKG(self, gpkg_path, tempLayerName, context, feedback)
+            mergedLayer = f'{gpkg_path}|layername={mergedLayer}'
+
+            vgle_gpkgs.deleteTable(gpkg_path, self.distanceMatrixTable)
+            vgle_gpkgs.deleteIndexes(self.layer[0], self.layer[1])
+            vgle_gpkgs.deleteIndexes(self.layer[0], mergedLayer)
 
             if self.strictHDI or self.strictHFI:
                 feedback.pushInfo('No change was made, probably due to the too strict conditions (HDI or HFI)! Try to disable these parameters and run again.') 
