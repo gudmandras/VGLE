@@ -149,7 +149,7 @@ class PolygonGrouperGPKG(QgsProcessingAlgorithm):
         self.stats = parameters['Stats']
         parameters['Simply'] = True
         self.simply = parameters['Simply']
-        self.child = parameters['IS_CHILD']
+        self.child = self.parameterAsBool(parameters, 'IS_CHILD', context)
 
         filePath = self.parameterAsVectorLayer(parameters, 'Inputlayer', context).source()
         directory = os.path.dirname(filePath)
