@@ -85,7 +85,7 @@ def createTempLayerIntoGPKG(layer, postfix, timeStamp, feedback):
             feedback.reportError("No feature layers found in the GPKG.")
             return None, None
 
-    target_layer_name = f"{str(source_layer_name)}_{postfix}_{timeStamp}"
+    target_layer_name = f"{str(source_layer_name.replace(' ', '_'))}_{postfix}_{timeStamp}"
     feedback.pushInfo(source_layer_name)
 
     gpkg_path = os.path.normpath(gpkg_path)
@@ -254,16 +254,24 @@ def createIdFieldGPKG(gpkg_path, layer_name):
 
     return new_field
 
-def copyFieldGPKG(self, source_field, target_field):
-    gpkg_path, layer_name = self.layer
+def copyFieldGPKG(gpkg_path, layer_name, source_field, target_field): 
     conn = sqlite3.connect(gpkg_path)
     cur = conn.cursor()
 
-    cur.execute(f'''
-        UPDATE "{layer_name}"
-        SET "{target_field}" = "{source_field}"
-    ''')
-
+    try:
+        cur.execute(f'''
+            UPDATE "{layer_name}"
+            SET "{target_field}" = "{source_field}"
+        ''')
+    except sqlite3.OperationalError:
+        dropTriggers(gpkg_path, layer_name)
+        try:
+            cur.execute(f'''
+                UPDATE "{layer_name}"
+                SET "{target_field}" = "{source_field}"
+            ''')
+        except sqlite3.OperationalError:
+            pass
     conn.commit()
     conn.close()
 
@@ -480,11 +488,11 @@ def createMergedFileGPKG(self, gpkg_path, layer_name, context, feedback):
     #if result == QgsVectorFileWriter.NoError:
     #    print("Merged file write completed successfully")
 
-    layer = QgsVectorLayer(newUri, output_layer_name, "ogr")
-    feedback.pushInfo(f"Output layer created: {output_layer_name} - feature count: {layer.featureCount()}")
-    layer = None
+    #layer = QgsVectorLayer(newUri, output_layer_name, "ogr")
+    #feedback.pushInfo(f"Output layer created: {output_layer_name} - feature count: {layer.featureCount()}")
+    #layer = None
     
-    del dissolvedLayer, differences
+    del dissolvedLayer, differences, mergedLayer_temp
     #del mergedLayer, dissolvedLayer, differences, options, result
 
     return output_layer_name
@@ -492,10 +500,75 @@ def createMergedFileGPKG(self, gpkg_path, layer_name, context, feedback):
 def deleteTable(gpkg_path, layer_name):
     conn = sqlite3.connect(gpkg_path)
     cur = conn.cursor()
+    # Remove spatial index first
+    try:
+        cur.execute(f"""
+            SELECT DisableSpatialIndex('{layer_name}', 'geom')
+        """)
+    except:
+        pass
+
+    # Drop RTree tables
+    cur.execute(f'''
+        SELECT name
+        FROM sqlite_master
+        WHERE type='table'
+        AND name LIKE 'rtree_{layer_name}%'
+    ''')
+
+    for (tbl,) in cur.fetchall():
+        cur.execute(f'DROP TABLE IF EXISTS "{tbl}"')
+
+    # Drop triggers
+    cur.execute(f'''
+        SELECT name
+        FROM sqlite_master
+        WHERE type='trigger'
+        AND tbl_name=?
+    ''', (layer_name,))
+
+    for (trg,) in cur.fetchall():
+        cur.execute(f'DROP TRIGGER IF EXISTS "{trg}"')
+
+    # Drop indexes
+    cur.execute(f'''
+        SELECT name
+        FROM sqlite_master
+        WHERE type='index'
+        AND tbl_name=?
+    ''', (layer_name,))
+
+    for (idx,) in cur.fetchall():
+        if not idx.startswith("sqlite_autoindex"):
+            cur.execute(f'DROP INDEX IF EXISTS "{idx}"')
+
+    # Remove metadata
+    cur.execute(
+        "DELETE FROM gpkg_geometry_columns WHERE table_name=?",
+        (layer_name,)
+    )
+
+    cur.execute(
+        "DELETE FROM gpkg_contents WHERE table_name=?",
+        (layer_name,)
+    )
+
+    cur.execute(
+        "DELETE FROM gpkg_extensions WHERE table_name=?",
+        (layer_name,)
+    )
+
+    # Finally drop actual table
     cur.execute(f'DROP TABLE IF EXISTS "{layer_name}"')
-    cur.execute("DELETE FROM gpkg_contents WHERE table_name = ?", (layer_name,))
+
     conn.commit()
     conn.close()
+    
+    #cur = conn.cursor()
+    #cur.execute(f'DROP TABLE IF EXISTS "{layer_name}"')
+    #cur.execute("DELETE FROM gpkg_contents WHERE table_name = ?", (layer_name,))
+    #conn.commit()
+    #conn.close()
 
 def deleteField(gpkg_path, layer_name, field_names):
     conn = sqlite3.connect(gpkg_path)
@@ -1519,6 +1592,8 @@ def update_holdersHoldingsNumberGPKG(self, holder, targetHolder, holderCombinati
     self.holdersHoldingNumber[targetHolder] += len(holderCombinationForChange) - len(targetCombinationForChange)
 
 def saveInteractionOutput1GPKG(self):
+    #import ptvsd
+    #ptvsd.debug_this_thread()
     gpkg_path, layer_name = self.layer
     conn = sqlite3.connect(gpkg_path)
     cur = conn.cursor()
@@ -1555,10 +1630,8 @@ def saveInteractionOutput1GPKG(self):
             if holderAgain not in interactionTable:
                 interactionTable[holderAgain] = {}
             if holder != holderAgain:
-                exchangeNum = 0
                 toHolderHoldings = afterHoldersWithHoldings[holderAgain]
-                diff = len(fromHolderHoldings) - len(list(set(fromHolderHoldings) - set(toHolderHoldings)))
-                exchangeNum = diff
+                exchangeNum = len(fromHolderHoldings) - len(list(set(fromHolderHoldings) - set(toHolderHoldings)))
                 interactionTable[holder][holderAgain] = exchangeNum
 
     changes = {}
@@ -1736,6 +1809,35 @@ def avgDistance(self, seed, featureIds):
             sumDistance += distance
     return sumDistance / divider
 
+def sortHolderWithHoldings(holdersWithHoldings):
+    sortedHoldersWithHoldings = dict(sorted(holdersWithHoldings.items(), key=lambda item: len(item[1]), reverse=True))
+    return sortedHoldersWithHoldings
+
+def dropTriggers(gpkg_path, layer_name):
+    conn = sqlite3.connect(gpkg_path)
+    cur = conn.cursor()
+
+    cur.execute("""
+        SELECT type, name
+        FROM sqlite_master
+        WHERE (
+            sql LIKE '%ST_%'
+            OR name LIKE 'rtree_%'
+        )
+    """)
+
+    rows = cur.fetchall()
+
+    for obj_type, name in rows:
+
+        try:
+            if obj_type == 'trigger':
+                cur.execute(f'DROP TRIGGER IF EXISTS "{name}"')
+        except Exception as e:
+            print("ERROR:", name, e)
+
+    conn.commit()
+    conn.close()
 
 def neighboursGPKG(self, feedback, totalAreas=None, context=None):
     maxTurn = 10

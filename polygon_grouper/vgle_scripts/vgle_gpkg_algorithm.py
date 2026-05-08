@@ -83,7 +83,7 @@ class PolygonGrouperGPKG(QgsProcessingAlgorithm):
         child.setFlags(child.flags() | QgsProcessingParameterDefinition.FlagHidden)
         self.addParameter(child)
 
-        self.version = '2026-05-04-01'
+        self.version = '2026-05-07-01'
 
     def name(self):
         return 'polygon_grouper_gpkg'
@@ -170,6 +170,7 @@ class PolygonGrouperGPKG(QgsProcessingAlgorithm):
         self.holderAttribute = vgle_gpkgs.setHolderFieldGPKG(gpkg_path, tempLayerName, parameters["AssignedByField"])
         self.idAttribute = vgle_gpkgs.createIdFieldGPKG(gpkg_path, tempLayerName)
         holdersWithHoldings, holdersHoldingNumber = vgle_gpkgs.getHoldersHoldingsGPKG(gpkg_path, tempLayerName, self.holderAttribute, self.idAttribute)
+        vgle_gpkgs.sortHolderWithHoldings(holdersWithHoldings)
         holdingsWithArea = vgle_gpkgs.getHoldingsAreasGPKG(gpkg_path, tempLayerName, self.weight, self.idAttribute)
         self.holdersWithHoldings = holdersWithHoldings
         self.holdersHoldingNumber = holdersHoldingNumber
@@ -240,15 +241,14 @@ class PolygonGrouperGPKG(QgsProcessingAlgorithm):
 
         if swapedLayer:
             feedback.setCurrentStep(self.steps-1)
-            if len(parameters["AssignedByField"]) == 1:
-                vgle_gpkgs.copyFieldGPKG(self, self.actualHolderAttribute, parameters["AssignedByField"][0])
             mergedLayer = vgle_gpkgs.createMergedFileGPKG(self, gpkg_path, tempLayerName, context, feedback)
+            vgle_gpkgs.copyFieldGPKG(gpkg_path, mergedLayer, self.actualHolderAttribute, parameters["AssignedByField"][0])
             toDeleteAttr = [attr for attr in vgle_gpkgs.getFieldNamesGPKG(gpkg_path, mergedLayer)
                             if attr not in vgle_layers.getAttributesNames(self.parameterAsVectorLayer(parameters, 'Inputlayer', context)) and attr not in [self.idAttribute, 'seed_flag', 'geom']]
             vgle_gpkgs.deleteField(gpkg_path, mergedLayer, toDeleteAttr)
-
+            
             if parameters['Stats']:
-                _, changes = vgle_gpkgs.saveInteractionOutput1GPKG(self)
+                exc_freq_table, changes = vgle_gpkgs.saveInteractionOutput1GPKG(self)
                 swap_freq_table = vgle_gpkgs.saveInteractionOutput2GPKG(self)               
                 vgle_gpkgs.calculateStatDataGPKG(self, gpkg_path, tempLayerName, indicatorTable, 'AE', self.actualHolderAttribute)
                 _, __ = vgle_gpkgs.calculateTotalDistancesGPKG(self, gpkg_path, mergedLayer)
@@ -259,6 +259,9 @@ class PolygonGrouperGPKG(QgsProcessingAlgorithm):
                 vgle_gpkgs.deleteTable(gpkg_path, mergedAETable)
 
                 results['SWAP_FREQ_TABLE'] = swap_freq_table
+
+            if len(parameters["AssignedByField"]) == 1:
+                vgle_gpkgs.copyFieldGPKG(gpkg_path, tempLayerName, self.actualHolderAttribute, parameters["AssignedByField"][0])
 
             vgle_gpkgs.deleteTable(gpkg_path, self.distanceMatrixTable)
             vgle_gpkgs.deleteIndexes(self.layer[0], self.layer[1])
@@ -280,6 +283,22 @@ class PolygonGrouperGPKG(QgsProcessingAlgorithm):
                 context.addLayerToLoadOnCompletion(
                     uri,
                     QgsProcessingContext.LayerDetails(mergedLayer, context.project())
+                )
+
+                cleaned_name = swap_freq_table.replace('"', '').replace("'", '').strip()
+                uri = f'{gpkg_path}|layername={cleaned_name}'
+                feedback.pushInfo(f"URI: {uri}")
+                context.addLayerToLoadOnCompletion(
+                    uri,
+                    QgsProcessingContext.LayerDetails(swap_freq_table, context.project())
+                )
+
+                cleaned_name = exc_freq_table.replace('"', '').replace("'", '').strip()
+                uri = f'{gpkg_path}|layername={cleaned_name}'
+                feedback.pushInfo(f"URI: {uri}")
+                context.addLayerToLoadOnCompletion(
+                    uri,
+                    QgsProcessingContext.LayerDetails(exc_freq_table, context.project())
                 )
 
             mainEndTime = time.time()

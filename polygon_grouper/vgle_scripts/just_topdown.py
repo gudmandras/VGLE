@@ -80,7 +80,7 @@ class JustTopDownAlgorithm(QgsProcessingAlgorithm):
         strict2.setFlags(strict2.flags() | QgsProcessingParameterDefinition.FlagAdvanced)
         self.addParameter(strict2)
         self.permanent_data = {}
-        self.version = '2026-04-10-02'
+        self.version = '2026-05-07-01'
 
     def tr(self, string):
         return QCoreApplication.translate('Processing', string)
