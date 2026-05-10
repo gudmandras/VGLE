@@ -11,6 +11,7 @@ import time
 import gc
 from datetime import datetime
 
+from PyQt5.QtCore import QTimer, QEventLoop
 from qgis.PyQt.QtCore import QCoreApplication
 from qgis.PyQt.QtWidgets import QDialog, QVBoxLayout, QPushButton, QWidget
 from qgis.core import (QgsProject,
@@ -31,6 +32,10 @@ from qgis.core import (QgsProject,
 
 from . import vgle_utils, vgle_features, vgle_methods, vgle_layers, vgle_gpkgs
 
+def wait(milliseconds):
+    loop = QEventLoop()
+    QTimer.singleShot(milliseconds, loop.quit)
+    loop.exec_()
 
 class PolygonGrouperGPKG(QgsProcessingAlgorithm):
 
@@ -78,12 +83,17 @@ class PolygonGrouperGPKG(QgsProcessingAlgorithm):
         stats = QgsProcessingParameterBoolean('Stats', "Generate statistics", defaultValue=False)
         stats.setFlags(stats.flags() | QgsProcessingParameterDefinition.FlagAdvanced)
         self.addParameter(stats)
+        simplfy = QgsProcessingParameterNumber('Simply', "Number of holding combinations to analyze:",
+                                                type=QgsProcessingParameterNumber.Integer,
+                                                minValue=0, defaultValue=0)
+        simplfy.setFlags(simplfy.flags() | QgsProcessingParameterDefinition.FlagAdvanced)
+        self.addParameter(simplfy)
 
         child = QgsProcessingParameterBoolean('IS_CHILD', '', defaultValue=False)
         child.setFlags(child.flags() | QgsProcessingParameterDefinition.FlagHidden)
         self.addParameter(child)
 
-        self.version = '2026-05-07-01'
+        self.version = '2026-05-10-01'
 
     def name(self):
         return 'polygon_grouper_gpkg'
@@ -147,7 +157,6 @@ class PolygonGrouperGPKG(QgsProcessingAlgorithm):
         self.strictHDI = parameters['StrictHDI']
         self.strictHFI = parameters['StrictHFI']
         self.stats = parameters['Stats']
-        parameters['Simply'] = True
         self.simply = parameters['Simply']
         self.child = self.parameterAsBool(parameters, 'IS_CHILD', context)
 
@@ -242,6 +251,8 @@ class PolygonGrouperGPKG(QgsProcessingAlgorithm):
         if swapedLayer:
             feedback.setCurrentStep(self.steps-1)
             mergedLayer = vgle_gpkgs.createMergedFileGPKG(self, gpkg_path, tempLayerName, context, feedback)
+            #wait(5000)
+            vgle_gpkgs.copyFieldGPKG(gpkg_path, mergedLayer, self.actualHolderAttribute, parameters["AssignedByField"][0])
             vgle_gpkgs.copyFieldGPKG(gpkg_path, mergedLayer, self.actualHolderAttribute, parameters["AssignedByField"][0])
             toDeleteAttr = [attr for attr in vgle_gpkgs.getFieldNamesGPKG(gpkg_path, mergedLayer)
                             if attr not in vgle_layers.getAttributesNames(self.parameterAsVectorLayer(parameters, 'Inputlayer', context)) and attr not in [self.idAttribute, 'seed_flag', 'geom']]
@@ -285,21 +296,22 @@ class PolygonGrouperGPKG(QgsProcessingAlgorithm):
                     QgsProcessingContext.LayerDetails(mergedLayer, context.project())
                 )
 
-                cleaned_name = swap_freq_table.replace('"', '').replace("'", '').strip()
-                uri = f'{gpkg_path}|layername={cleaned_name}'
-                feedback.pushInfo(f"URI: {uri}")
-                context.addLayerToLoadOnCompletion(
-                    uri,
-                    QgsProcessingContext.LayerDetails(swap_freq_table, context.project())
-                )
+                if parameters['Stats']:
+                    cleaned_name = swap_freq_table.replace('"', '').replace("'", '').strip()
+                    uri = f'{gpkg_path}|layername={cleaned_name}'
+                    feedback.pushInfo(f"URI: {uri}")
+                    context.addLayerToLoadOnCompletion(
+                        uri,
+                        QgsProcessingContext.LayerDetails(swap_freq_table, context.project())
+                    )
 
-                cleaned_name = exc_freq_table.replace('"', '').replace("'", '').strip()
-                uri = f'{gpkg_path}|layername={cleaned_name}'
-                feedback.pushInfo(f"URI: {uri}")
-                context.addLayerToLoadOnCompletion(
-                    uri,
-                    QgsProcessingContext.LayerDetails(exc_freq_table, context.project())
-                )
+                    cleaned_name = exc_freq_table.replace('"', '').replace("'", '').strip()
+                    uri = f'{gpkg_path}|layername={cleaned_name}'
+                    feedback.pushInfo(f"URI: {uri}")
+                    context.addLayerToLoadOnCompletion(
+                        uri,
+                        QgsProcessingContext.LayerDetails(exc_freq_table, context.project())
+                    )
 
             mainEndTime = time.time()
             logging.debug(f'Script time:{mainEndTime-mainStartTime}')

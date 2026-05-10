@@ -23,8 +23,6 @@ from qgis.core import (QgsVectorFileWriter,
                        QgsProcessingOutputLayerDefinition)
 from . import vgle_layers, vgle_utils
 
-MAXCOMBTURN = 1000
-MAXCANDIDATES = 5
 
 def checkTableName(parameters, feedback):
     allowed_pattern = re.compile(r"^[A-Za-z0-9_]+$")
@@ -261,14 +259,14 @@ def copyFieldGPKG(gpkg_path, layer_name, source_field, target_field):
     try:
         cur.execute(f'''
             UPDATE "{layer_name}"
-            SET "{target_field}" = "{source_field}"
+            SET {target_field} = {source_field}
         ''')
     except sqlite3.OperationalError:
         dropTriggers(gpkg_path, layer_name)
         try:
             cur.execute(f'''
                 UPDATE "{layer_name}"
-                SET "{target_field}" = "{source_field}"
+                SET {target_field} = {source_field}
             ''')
         except sqlite3.OperationalError:
             pass
@@ -490,9 +488,9 @@ def createMergedFileGPKG(self, gpkg_path, layer_name, context, feedback):
 
     #layer = QgsVectorLayer(newUri, output_layer_name, "ogr")
     #feedback.pushInfo(f"Output layer created: {output_layer_name} - feature count: {layer.featureCount()}")
-    #layer = None
+    layer = None
     
-    del dissolvedLayer, differences, mergedLayer_temp
+    del dissolvedLayer, differences, mergedLayer_temp, layer
     #del mergedLayer, dissolvedLayer, differences, options, result
 
     return output_layer_name
@@ -1872,9 +1870,18 @@ def neighboursGPKG(self, feedback, totalAreas=None, context=None):
             if not seeds:
                 continue
 
+            if self.simply:
+                MAXCANDIDATES = self.simply
+                MAXCOMBTURN = min(1000*MAXCANDIDATES, 100000)
+                candidate = 0
+                combTurn = 0
+
             for seed in seeds:
                 neighboursIds = queryNeighbours(self, holder, seed, neighbours, connection)
-                targetHoldings = list(self.filteredDistanceMatrix[seed].keys())
+                try:
+                    targetHoldings = list(self.filteredDistanceMatrix[seed].keys())
+                except KeyError:
+                    continue
 
                 #feedback.pushInfo(f'Holder {holder} - Seeds: {seeds} - Neighbours: {neighboursIds}')
 
@@ -1935,18 +1942,17 @@ def neighboursGPKG(self, feedback, totalAreas=None, context=None):
                     neighbourNewTotalArea = 0
                     totalAreaDifference = None
                     
-                    combTurn = 0
                     for combination in holdingCombinations:
-                        if self.simply:
-                            if combTurn < MAXCOMBTURN:
-                                combTurn += 1
-                            else:
-                                break
-
                         combinationLenght = len(combination)
 
                         for neighbourCombination in neighbourHoldingsCombinations:                
                             neighbourCombinationLenght = len(neighbourCombination)
+
+                            if self.simply:
+                                if combTurn >= MAXCOMBTURN:
+                                    break
+                                else:
+                                    combTurn += 1
 
                             #feedback.pushInfo(f'Combination turn - {lenTurn}')
 
@@ -1983,7 +1989,13 @@ def neighboursGPKG(self, feedback, totalAreas=None, context=None):
                                     # Average Distance condition
                                     if holderAvgDistance < holderNewAvgDistance or targetAvgDistance < targetNewAvgDistance:
                                         continue
-                                
+
+                                if self.simply:
+                                    if candidate >= MAXCANDIDATES:
+                                        break
+                                    else:
+                                        candidate += 1
+
                                 if totalAreaDifference is None:
                                     #feedback.pushInfo(f'Possible combination: {combination}')
                                     holderCombinationForChange = combination
@@ -2081,10 +2093,17 @@ def closerGPKG(self, feedback, totalAreas=None, context=None):
             if len(holderAllItems) == 0:
                 continue
 
-            targetHoldings = list(self.filteredDistanceMatrix[seed].keys())
-            targetHolders = list(set([queryHolder(self, holding, connection) for holding in targetHoldings]))
+            try:
+                targetHoldings = list(self.filteredDistanceMatrix[seed].keys())
+                targetHolders = list(set([queryHolder(self, holding, connection) for holding in targetHoldings]))
+            except KeyError:
+                continue
 
             if self.simply:
+                MAXCANDIDATES = self.simply
+                MAXCOMBTURN = min(1000*MAXCANDIDATES, 100000)
+                candidate = 0
+                combTurn = 0
                 if len(targetHolders) > 50:
                     targetHolders = random.choices(targetHolders, k=50)
 
@@ -2130,19 +2149,14 @@ def closerGPKG(self, feedback, totalAreas=None, context=None):
                     targetMaxDistance = 0
                     targetAvgDistance = 0
 
-                combTurn = 0
                 for targetCombination in vgle_utils.combine_with_constant_in_all(filteredLocalTargetHoldings):
-                    if numberOfCandidates > MAXCANDIDATES or combTurn > MAXCOMBTURN:
-                        break
-
                     for holderCombination in vgle_utils.combine_with_constant_in_all(holderChangables):
-                        if numberOfCandidates > MAXCANDIDATES:
-                            break
 
-                        if combTurn < MAXCOMBTURN:
-                            combTurn += 1
-                        else:
-                            break
+                        if self.simply:
+                            if combTurn >= MAXCOMBTURN:
+                                break
+                            else:
+                                combTurn += 1
 
                         # Polygon number condition
                         if self.strictHFI:
@@ -2186,6 +2200,12 @@ def closerGPKG(self, feedback, totalAreas=None, context=None):
                         except ZeroDivisionError:
                             distanceDifference = 0
                         localMeasure = weightDifference + distanceDifference
+
+                        if self.simply:
+                            if candidate >= MAXCANDIDATES:
+                                break
+                            else:
+                                candidate += 1
 
                         if measure is None:
                             numberOfCandidates += 1

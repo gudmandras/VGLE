@@ -79,8 +79,13 @@ class JustTopDownAlgorithm(QgsProcessingAlgorithm):
         strict2 = QgsProcessingParameterBoolean('StrictHFI', "Strict condition on Holding Fragmentation Indicator (HFI)", defaultValue=False)
         strict2.setFlags(strict2.flags() | QgsProcessingParameterDefinition.FlagAdvanced)
         self.addParameter(strict2)
-        self.permanent_data = {}
-        self.version = '2026-05-07-01'
+        simplfy = QgsProcessingParameterNumber('Simply', "Number of holding combinations to analyze:",
+                                                type=QgsProcessingParameterNumber.Integer,
+                                                minValue=0, defaultValue=0)
+        simplfy.setFlags(simplfy.flags() | QgsProcessingParameterDefinition.FlagAdvanced)
+        self.addParameter(simplfy)
+
+        self.version = '2026-05-10-01'
 
     def tr(self, string):
         return QCoreApplication.translate('Processing', string)
@@ -113,7 +118,6 @@ class JustTopDownAlgorithm(QgsProcessingAlgorithm):
     def processAlgorithm(self, parameters, context, model_feedback):
         #import ptvsd
         #ptvsd.debug_this_thread()
-        parameters["Simply"] = False
         results = {}
 
         if not is_r_provider_installed():
