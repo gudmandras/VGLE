@@ -93,7 +93,7 @@ class PolygonGrouperGPKG(QgsProcessingAlgorithm):
         child.setFlags(child.flags() | QgsProcessingParameterDefinition.FlagHidden)
         self.addParameter(child)
 
-        self.version = '2026-05-10-01'
+        self.version = '2026-05-12-01'
 
     def name(self):
         return 'polygon_grouper_gpkg'

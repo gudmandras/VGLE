@@ -1590,8 +1590,6 @@ def update_holdersHoldingsNumberGPKG(self, holder, targetHolder, holderCombinati
     self.holdersHoldingNumber[targetHolder] += len(holderCombinationForChange) - len(targetCombinationForChange)
 
 def saveInteractionOutput1GPKG(self):
-    #import ptvsd
-    #ptvsd.debug_this_thread()
     gpkg_path, layer_name = self.layer
     conn = sqlite3.connect(gpkg_path)
     cur = conn.cursor()
@@ -1889,15 +1887,14 @@ def neighboursGPKG(self, feedback, totalAreas=None, context=None):
                     holderTotalArea = holdersLocalTotalArea[holder]
                     holderChangables = queryChangableItemsWithoutDistance(self, holder, connection)
                     holderChangables = [holding for holding in holderChangables if holding in targetHoldings and holding not in changedOnce]
+
+                    if not holderChangables:
+                        continue
+
                     if self.strictHDI:
                         holderAllItems = [item for item in queryAllHolderItem(self, holder, connection) if item != seed]
                         holderMaxDistance = maxDistance(self, seed, holderAllItems)
                         holderAvgDistance = avgDistance(self, seed, holderAllItems)
-
-                    #feedback.pushInfo(f'HolderChangables for holder {holder} and seed {seed}: {len(holderChangables)}')
-
-                    if not holderChangables:
-                        continue
                     
                     # Get ngh holder name
                     neighbourHolder = queryHolder(self, nghID)
@@ -1974,11 +1971,11 @@ def neighboursGPKG(self, feedback, totalAreas=None, context=None):
 
                                 # Distance conditions
                                 if self.strictHDI:
-                                    holderNewAllItems = [item for item in queryAllHolderItem(self, holder) if item != seed] + neighbourCombination - combination
+                                    holderNewAllItems = [item for item in queryAllHolderItem(self, holder) if item != seed] + [item for item in neighbourCombination if item not in combination]
                                     holderNewMaxDistance = maxDistance(self, seed, holderNewAllItems)
                                     holderNewAvgDistance = avgDistance(self, seed, holderNewAllItems)
 
-                                    targetNewAllItems = [item for item in queryAllHolderItem(self, neighbourHolder) if item != neighbourHolderSeed] + combination - neighbourCombination
+                                    targetNewAllItems = [item for item in queryAllHolderItem(self, neighbourHolder) if item != neighbourHolderSeed] + [item for item in combination if item not in neighbourCombination]
                                     targetNewMaxDistance = maxDistance(self, neighbourHolderSeed, targetNewAllItems)
                                     targetNewAvgDistance = avgDistance(self, neighbourHolderSeed, targetNewAllItems)/len(targetNewAllItems)
 
