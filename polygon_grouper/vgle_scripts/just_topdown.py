@@ -275,6 +275,7 @@ class JustTopDownAlgorithm(QgsProcessingAlgorithm):
         cur = conn.cursor()
 
         id_list_str = ",".join(map(str, fids))
+        placeholders = ",".join(["?"] * len(fids))
 
         target_table = f"{source_table}_{timeStamp}_group_{postfix}"
         
@@ -290,9 +291,9 @@ class JustTopDownAlgorithm(QgsProcessingAlgorithm):
             query = f"""
                 INSERT INTO "{target_table}" ({self.colList[0]}, {self.colList[1]}, {geom_col}) 
                 SELECT {self.colList[0]}, {self.colList[1]}, {geom_col} FROM "{source_table}" 
-                WHERE "{self.holderAttribute}" IN ({id_list_str})
+                WHERE "{self.holderAttribute}" IN ({placeholders})
             """
-            cur.execute(query)
+            cur.execute(query, fids)
 
             cur.execute(f'ALTER TABLE "{target_table}" ADD COLUMN topdown_group REAL;')
 
@@ -335,6 +336,7 @@ class JustTopDownAlgorithm(QgsProcessingAlgorithm):
         cur = conn.cursor()
 
         id_list_str = ",".join(map(str, fids))
+        placeholders = ",".join(["?"] * len(fids))
 
         target_table = f"{source_table}_{timeStamp}_group_{postfix}"
         
@@ -350,9 +352,9 @@ class JustTopDownAlgorithm(QgsProcessingAlgorithm):
             query = f"""
                 INSERT INTO "{target_table}" ({self.colList[0]}, {self.colList[1]}, {geom_col}) 
                 SELECT {self.colList[0]}, {self.colList[1]}, {geom_col} FROM "{source_table}" 
-                WHERE "{self.holderAttribute}" IN ({id_list_str})
+                WHERE "{self.holderAttribute}" IN ({placeholders})
             """
-            cur.execute(query)
+            cur.execute(query, fids)
 
             cur.execute(f'ALTER TABLE "{target_table}" ADD COLUMN topdown_group REAL;')
 
@@ -391,6 +393,7 @@ class JustTopDownAlgorithm(QgsProcessingAlgorithm):
         cur = conn.cursor()
 
         id_list_str = ",".join(map(str, fids))
+        placeholders = ",".join(["?"] * len(fids))
 
         target_table = f"{source_table}_{timeStamp}_group_{postfix}"
         
@@ -408,9 +411,9 @@ class JustTopDownAlgorithm(QgsProcessingAlgorithm):
             query = f"""
                 INSERT INTO "{target_table}" ({column_string}) 
                 SELECT {column_string} FROM "{source_table}" 
-                WHERE "{self.holderAttribute}" IN ({id_list_str})
+                WHERE "{self.holderAttribute}" IN ({placeholders})
             """
-            cur.execute(query)
+            cur.execute(query, fids)
 
             cur.execute(f'UPDATE "{target_table}" SET "topdown_group" = {postfix};')
 
@@ -587,6 +590,7 @@ def queryNoneGroupMembers(self, assigned_holders):
 
     try:
         id_list_str = ",".join(map(str, assigned_holders)) if assigned_holders else "NULL"
+        placeholders = ",".join(["?"] * len(assigned_holders)) if assigned_holders else "NULL"
         cur.execute(f"""
             SELECT "{self.holderAttribute}" FROM "{source_table}"
             WHERE "{self.holderAttribute}" NOT IN ({id_list_str})
