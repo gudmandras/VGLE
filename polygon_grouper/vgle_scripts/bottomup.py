@@ -85,7 +85,7 @@ class BottomUpAlgorithm(QgsProcessingAlgorithm):
         holdersTreshold.setFlags(holdersTreshold.flags() | QgsProcessingParameterDefinition.FlagAdvanced)
         self.addParameter(holdersTreshold)
 
-        self.version = '2026-05-31-01'
+        self.version = '2026-06-04-01'
 
     def tr(self, string):
         return QCoreApplication.translate('Processing', string)
