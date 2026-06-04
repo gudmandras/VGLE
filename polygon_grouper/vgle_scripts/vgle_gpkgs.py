@@ -742,6 +742,25 @@ def getFieldNamesGPKG(gpkg_path, layer_name):
     return columns
 
 
+def getSelectedHolders(self, gpkg_path, layer_name, old_layer):
+    conn = sqlite3.connect(gpkg_path)
+    cur = conn.cursor()
+
+    pk_field_idx = old_layer.primaryKeyAttributes()[0]
+    pk_field = old_layer.fields()[pk_field_idx].name()
+    selectedIds = [f[pk_field] for f in old_layer.selectedFeatures()]
+
+    placeholders = ','.join(['?'] * len(selectedIds))
+
+    cur.execute(f"""
+        SELECT DISTINCT "{self.holderAttribute}"
+        FROM "{layer_name}"
+        WHERE "{pk_field}" IN ({placeholders})
+    """, selectedIds)
+    selectedHolders = [str(row[0]) for row in cur.fetchall()]
+
+    return selectedHolders
+
 def determineSeedPolygonsGPKG(self, gpkg_path, layer_name, selectedFeatures=None):
     """
     DESCRIPTION: Determine one seed polygon for each holder adn store in a self dictionary
@@ -1850,6 +1869,9 @@ def neighboursGPKG(self, feedback, totalAreas=None, context=None):
     neighbours = calculateNeighboursGPKG(self, feedback, context)
     feedback.pushInfo(f'Neighbours calculated')
 
+    if hasattr(self, "selectedHoldersIds"):
+        currentGroupSize = copy.copy(len(self.selectedHoldersIds))
+
     while changer:
         self.turn += 1
         maxTurn -= 1
@@ -1860,6 +1882,9 @@ def neighboursGPKG(self, feedback, totalAreas=None, context=None):
         for holder in self.holdersWithHoldings.keys():
             if holder == 'NULL':
                 continue
+            elif hasattr(self, "selectedHoldersIds"):
+                if holder not in self.selectedHoldersIds and maxTurn != 11:
+                    continue
 
             seeds = querySeeds(self, holder, connection)
 
@@ -2025,7 +2050,24 @@ def neighboursGPKG(self, feedback, totalAreas=None, context=None):
                         holdersLocalTotalArea[holder] = holderNewTotalArea
                         holdersLocalTotalArea[neighbourHolder] = neighbourNewTotalArea
 
-        connection.close()                              
+                        if hasattr(self, "selectedHoldersIds"):
+                            if maxTurn != 11:
+                                if holder not in self.selectedHoldersIds:
+                                    if len(self.selectedHoldersIds) < self.groupSize:
+                                        self.selectedHoldersIds.append(holder)
+                                if neighbourHolder not in self.selectedHoldersIds:
+                                    if len(self.selectedHoldersIds) < self.groupSize:
+                                        self.selectedHoldersIds.append(neighbourHolder)
+                            else:
+                                if holder not in self.selectedHoldersIds and neighbourHolder in self.selectedHoldersIds:
+                                    if len(self.selectedHoldersIds) < self.groupSize:
+                                        self.selectedHoldersIds.append(holder)
+                                if neighbourHolder not in self.selectedHoldersIds and holder in self.selectedHoldersIds:
+                                    if len(self.selectedHoldersIds) < self.groupSize:
+                                        self.selectedHoldersIds.append(neighbourHolder)
+                            feedback.pushInfo(f'Bottom Up group members (lenght - {len(self.selectedHoldersIds)}): {self.selectedHoldersIds}')    
+
+        connection.close()
 
         turnChanges = self.counter - localChanges
         feedback.pushInfo(f'Changes in round {self.turn}: {turnChanges}') 
@@ -2049,6 +2091,11 @@ def neighboursGPKG(self, feedback, totalAreas=None, context=None):
         else:
             # Changes happened, continue to the next turn
             localChanges = copy.deepcopy(self.counter)
+            if hasattr(self, "selectedHoldersIds"):
+                if currentGroupSize == len(self.selectedHoldersIds) or len(self.selectedHoldersIds) == self.groupSize:
+                    changer = False
+                else:
+                    currentGroupSize = copy.copy(len(self.selectedHoldersIds))
         feedback.setCurrentStep(1 + self.turn)
         feedback.pushInfo(f'Save turn results to the file')
         if feedback.isCanceled():
@@ -2062,6 +2109,9 @@ def closerGPKG(self, feedback, totalAreas=None, context=None):
     maxTurn = 10
     localChanges = copy.deepcopy(self.counter)
     changer = True
+
+    if hasattr(self, "selectedHoldersIds"):
+        currentGroupSize = copy.copy(len(self.selectedHoldersIds))
 
     if totalAreas:
         holdersLocalTotalArea = totalAreas
@@ -2080,6 +2130,9 @@ def closerGPKG(self, feedback, totalAreas=None, context=None):
         for holder in self.holdersWithHoldings.keys():
             if holder == 'NULL':
                 continue
+            elif hasattr(self, "selectedHoldersIds"):
+                if holder not in self.selectedHoldersIds and maxTurn != 11:
+                    continue
 
             seeds = querySeeds(self, holder, connection)
             if not seeds:
@@ -2239,7 +2292,25 @@ def closerGPKG(self, feedback, totalAreas=None, context=None):
                     feedback.pushInfo(commitMessage)
 
                     holdersLocalTotalArea[holder] = changeHolderTotalArea
-                    holdersLocalTotalArea[targetHolder] = changeTargetTotalArea  
+                    holdersLocalTotalArea[targetHolder] = changeTargetTotalArea
+
+                    if hasattr(self, "selectedHoldersIds"):
+                        if maxTurn != 11:
+                            if holder not in self.selectedHoldersIds:
+                                if len(self.selectedHoldersIds) < self.groupSize:
+                                    self.selectedHoldersIds.append(holder)
+                            if targetHolder not in self.selectedHoldersIds:
+                                if len(self.selectedHoldersIds) < self.groupSize:
+                                    self.selectedHoldersIds.append(targetHolder)
+                        else:
+                            if holder not in self.selectedHoldersIds and targetHolder in self.selectedHoldersIds:
+                                if len(self.selectedHoldersIds) < self.groupSize:
+                                    self.selectedHoldersIds.append(holder)
+                            if targetHolder not in self.selectedHoldersIds and holder in self.selectedHoldersIds:
+                                if len(self.selectedHoldersIds) < self.groupSize:
+                                    self.selectedHoldersIds.append(targetHolder)
+                        feedback.pushInfo(f'Bottom Up group members (lenght - {len(self.selectedHoldersIds)}): {self.selectedHoldersIds}')    
+
         
         connection.commit()
         connection.close()                          
@@ -2264,6 +2335,11 @@ def closerGPKG(self, feedback, totalAreas=None, context=None):
         else:
             # Changes happened, continue to the next turn
             localChanges = copy.deepcopy(self.counter)
+            if hasattr(self, "selectedHoldersIds"):
+                if currentGroupSize == len(self.selectedHoldersIds) or len(self.selectedHoldersIds) == self.groupSize:
+                    changer = False
+                else:
+                    currentGroupSize = copy.copy(len(self.selectedHoldersIds))
         feedback.setCurrentStep(1 + self.turn)
         feedback.pushInfo(f'Save turn results to the file')
         if feedback.isCanceled():

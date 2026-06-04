@@ -47,7 +47,7 @@ MESSAGE_CATEGORY = 'Messages'
 import sys, os, pathlib, glob
 sys.dont_write_bytecode = True
 
-
+"""
 def enable_remote_debugging():
     try:
         import ptvsd
@@ -63,7 +63,7 @@ def enable_remote_debugging():
         QgsMessageLog.logMessage(repr(format_exception[0]), MESSAGE_CATEGORY, Qgis.Critical)
         QgsMessageLog.logMessage(repr(format_exception[1]), MESSAGE_CATEGORY, Qgis.Critical)
         QgsMessageLog.logMessage(repr(format_exception[2]), MESSAGE_CATEGORY, Qgis.Critical)
-
+"""
 
 class vgle(object):
     """QGIS Plugin Implementation."""
@@ -77,7 +77,7 @@ class vgle(object):
         :type iface: QgsInterface
         """
         self.provider = None
-        enable_remote_debugging()
+        #enable_remote_debugging()
         pycFiles = glob.glob(os.path.dirname(os.path.abspath(__file__)) + "/*.pyc", recursive=True)
         for pycFile in pycFiles:
             if os.path.isfile(pycFile):
@@ -146,7 +146,7 @@ class vgle(object):
         # Only create GUI ONCE in callback, so that it will only load when the plugin is started
         if self.first_start == True:
             self.first_start = False
-        import ptvsd
-        ptvsd.debug_this_thread()
+        #import ptvsd
+        #ptvsd.debug_this_thread()
         processing.execAlgorithmDialog("Polygon Grouper:polygon_grouper")
 
