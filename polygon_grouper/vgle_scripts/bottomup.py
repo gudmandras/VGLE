@@ -85,7 +85,7 @@ class BottomUpAlgorithm(QgsProcessingAlgorithm):
         holdersTreshold.setFlags(holdersTreshold.flags() | QgsProcessingParameterDefinition.FlagAdvanced)
         self.addParameter(holdersTreshold)
 
-        self.version = '2026-06-04-01'
+        self.version = '2026-06-05-01'
 
     def tr(self, string):
         return QCoreApplication.translate('Processing', string)
@@ -242,6 +242,7 @@ class BottomUpAlgorithm(QgsProcessingAlgorithm):
 
         if swapedLayer:
             feedback.setCurrentStep(self.steps-1)
+            vgle_gpkgs.deleteRowsByAttributeValues(gpkg_path, tempLayerName, self.actualHolderAttribute, [k for k in list(self.holdersWithHoldings.keys()) if k not in self.selectedHoldersIds])
             mergedLayer = vgle_gpkgs.createMergedFileGPKG(self, gpkg_path, tempLayerName, context, feedback)
             #wait(5000)
             vgle_gpkgs.copyFieldGPKG(gpkg_path, mergedLayer, self.actualHolderAttribute, parameters["AssignedByField"][0])

@@ -630,6 +630,23 @@ def deleteIndexes(gpkg_path, layer_name):
     conn.commit()
     conn.close()
 
+def deleteRowsByAttributeValues(gpkg_path, layer_name, attribute_name, values):
+    conn = sqlite3.connect(gpkg_path)
+    cur = conn.cursor()
+
+    placeholders = ",".join(["?"] * len(values))
+
+    cur.execute(
+        f'''
+        DELETE FROM "{layer_name}"
+        WHERE "{attribute_name}" IN ({placeholders})
+        ''',
+        values
+    )
+
+    conn.commit()
+    conn.close()
+
 def getFieldPropertiesGPKG(gpkg_path, layer_name, attribute_name):
     conn = sqlite3.connect(gpkg_path)
     cur = conn.cursor()
