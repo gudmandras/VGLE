@@ -84,8 +84,25 @@ class JustTopDownAlgorithm(QgsProcessingAlgorithm):
                                                 minValue=0, defaultValue=0)
         simplfy.setFlags(simplfy.flags() | QgsProcessingParameterDefinition.FlagAdvanced)
         self.addParameter(simplfy)
+        ralgorithm = QgsProcessingParameterEnum('ralgorithm', 'Desired R algorithm',
+                                                       options=['cluster_louvain', 'cluster_leiden'],
+                                                       allowMultiple=False, defaultValue='cluster_louvain')
+        ralgorithm.setFlags(ralgorithm.flags() | QgsProcessingParameterDefinition.FlagAdvanced)
+        self.addParameter(ralgorithm)
 
-        self.version = '2026-05-10-01'
+        robjective = QgsProcessingParameterEnum('robjective', 'Desired objective function of the R algorithm (Only works with cluster_louvain)',
+                                                       options=['modularity', 'CPM'],
+                                                       allowMultiple=False, defaultValue='modularity')
+        robjective.setFlags(robjective.flags() | QgsProcessingParameterDefinition.FlagAdvanced)
+        self.addParameter(robjective)
+
+        resolution = QgsProcessingParameterNumber('resolution', 'Resolution value for cluster_louvain R algorithm',
+                                                type=QgsProcessingParameterNumber.Double,
+                                                minValue=0.0001, maxValue=2.0, defaultValue=0.2)
+        resolution.setFlags(resolution.flags() | QgsProcessingParameterDefinition.FlagAdvanced)
+        self.addParameter(resolution)
+
+        self.version = '2026-06-15-01'
 
     def tr(self, string):
         return QCoreApplication.translate('Processing', string)
@@ -128,6 +145,7 @@ class JustTopDownAlgorithm(QgsProcessingAlgorithm):
         R_folder = checkR_folder() 
         if R_folder:
             copy_sucess = copyR_script(os.path.join(os.path.dirname(os.path.abspath(__file__)),'topdown.rsx'))
+            copy_sucess = copyR_script(os.path.join(os.path.dirname(os.path.abspath(__file__)),'topdown2.rsx'))
             if not copy_sucess:
                 model_feedback.reportError("R Provider - RSX file cannot copied to the Rfolder.")
                 return {}
@@ -174,10 +192,18 @@ class JustTopDownAlgorithm(QgsProcessingAlgorithm):
         csv_path = os.path.join(directory, f'{self.SwapFreqLayer}_groups.csv')
         csv_sanitized = csv_path.replace('\\', '/')
 
-        result = processing.run("r:topdown", {
-            'INPUT': frequency,
-            'Group': csv_sanitized
-        }, context=context, feedback=feedback, is_child_algorithm=True)
+        if parameters['ralgorithm'] == 1:
+            result = processing.run("r:topdown2", {
+                'INPUT': frequency,
+                'OBJECTIVE_FUNCTION': parameters['robjective'],
+                'RESOLUTION': parameters['resolution'],
+                'Group': csv_sanitized
+            }, context=context, feedback=feedback)
+        else:
+            result = processing.run("r:topdown", {
+                'INPUT': frequency,
+                'Group': csv_sanitized
+            }, context=context, feedback=feedback)
 
         groupsCSV = result['Group']
 

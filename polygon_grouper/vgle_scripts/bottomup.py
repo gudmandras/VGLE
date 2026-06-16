@@ -84,8 +84,13 @@ class BottomUpAlgorithm(QgsProcessingAlgorithm):
                                                        minValue=0, defaultValue=20)
         holdersTreshold.setFlags(holdersTreshold.flags() | QgsProcessingParameterDefinition.FlagAdvanced)
         self.addParameter(holdersTreshold)
+        resultOption = QgsProcessingParameterEnum('resultOption', 'Desired way of the result',
+                                                       options=['Only the group in the result', 'Flag the group in the result'],
+                                                       allowMultiple=False, defaultValue='Only the group in the result')
+        resultOption.setFlags(resultOption.flags() | QgsProcessingParameterDefinition.FlagAdvanced)
+        self.addParameter(resultOption)
 
-        self.version = '2026-06-05-01'
+        self.version = '2026-06-15-01'
 
     def tr(self, string):
         return QCoreApplication.translate('Processing', string)
@@ -144,6 +149,7 @@ class BottomUpAlgorithm(QgsProcessingAlgorithm):
         self.stats = parameters['Stats']
         self.simply = parameters['Simply']
         self.groupSize = parameters['holdersThreshold']
+        self.resultType = parameters['resultOption']
 
         filePath = self.parameterAsVectorLayer(parameters, 'Inputlayer', context).source()
         directory = os.path.dirname(filePath)
@@ -207,6 +213,7 @@ class BottomUpAlgorithm(QgsProcessingAlgorithm):
             vgle_gpkgs.calculateStatDataGPKG(self, gpkg_path, tempLayerName, indicatorTable, 'BE', self.holderAttribute)
             
             self.interactionTable = vgle_utils.createInteractionOutput(self.holdersWithHoldings)
+            self.potentialInteractionTable = vgle_utils.createInteractionOutput(self.holdersWithHoldings)
             
             mergedBELayer = vgle_gpkgs.createMergedFileGPKG(self, gpkg_path, tempLayerName, context, feedback)
             _, __ = vgle_gpkgs.calculateTotalDistancesGPKG(self, gpkg_path, mergedBELayer)
@@ -242,7 +249,11 @@ class BottomUpAlgorithm(QgsProcessingAlgorithm):
 
         if swapedLayer:
             feedback.setCurrentStep(self.steps-1)
-            vgle_gpkgs.deleteRowsByAttributeValues(gpkg_path, tempLayerName, self.actualHolderAttribute, [k for k in list(self.holdersWithHoldings.keys()) if k not in self.selectedHoldersIds])
+            if self.resultType == 1:
+                vgle_gpkgs.createGroupFlag(gpkg_path, tempLayerName, self.actualHolderAttribute, self.selectedHoldersIds)
+            else:
+                vgle_gpkgs.deleteRowsByAttributeValues(gpkg_path, tempLayerName, self.actualHolderAttribute, [k for k in list(self.holdersWithHoldings.keys()) if k not in self.selectedHoldersIds])
+                
             mergedLayer = vgle_gpkgs.createMergedFileGPKG(self, gpkg_path, tempLayerName, context, feedback)
             #wait(5000)
             vgle_gpkgs.copyFieldGPKG(gpkg_path, mergedLayer, self.actualHolderAttribute, parameters["AssignedByField"][0])
@@ -253,7 +264,8 @@ class BottomUpAlgorithm(QgsProcessingAlgorithm):
             
             if parameters['Stats']:
                 exc_freq_table, changes = vgle_gpkgs.saveInteractionOutput1GPKG(self)
-                swap_freq_table = vgle_gpkgs.saveInteractionOutput2GPKG(self)               
+                swap_freq_table = vgle_gpkgs.saveInteractionOutput2GPKG(self) 
+                potential_swap_table = vgle_gpkgs.saveInteractionOutput3GPKG(self)               
                 vgle_gpkgs.calculateStatDataGPKG(self, gpkg_path, tempLayerName, indicatorTable, 'AE', self.actualHolderAttribute)
                 _, __ = vgle_gpkgs.calculateTotalDistancesGPKG(self, gpkg_path, mergedLayer)
                 mergedAETable = vgle_gpkgs.calculateStatDataMergedGPKG(self, gpkg_path, mergedLayer, self.actualHolderAttribute, timeStamp)
@@ -303,6 +315,14 @@ class BottomUpAlgorithm(QgsProcessingAlgorithm):
                 context.addLayerToLoadOnCompletion(
                     uri,
                     QgsProcessingContext.LayerDetails(exc_freq_table, context.project())
+                )
+
+                cleaned_name = potential_swap_table.replace('"', '').replace("'", '').strip()
+                uri = f'{gpkg_path}|layername={cleaned_name}'
+                feedback.pushInfo(f"URI: {uri}")
+                context.addLayerToLoadOnCompletion(
+                    uri,
+                    QgsProcessingContext.LayerDetails(potential_swap_table, context.project())
                 )
 
             mainEndTime = time.time()

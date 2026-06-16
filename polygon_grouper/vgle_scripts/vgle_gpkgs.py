@@ -862,10 +862,32 @@ def determineSeedPolygonsGPKG(self, gpkg_path, layer_name, selectedFeatures=None
     for holder, holding_id in cur.fetchall():
         holdersWithSeeds.setdefault(holder, []).append(holding_id)
 
-    
-
     conn.close()
     return 'seed_flag'
+
+def createGroupFlag(gpkg_path, layer_name, holderAttribute, groupHolders, attributeName='bottomup_group'):
+    conn = sqlite3.connect(gpkg_path)
+    cur = conn.cursor()
+
+    cur.execute(f"PRAGMA table_info('{layer_name}')")
+    columns = [row[1] for row in cur.fetchall()]
+    if attributeName not in columns:
+        cur.execute(f'ALTER TABLE "{layer_name}" ADD COLUMN {attributeName} INTEGER DEFAULT 0')
+
+    placeholders = ",".join(["?"] * len(groupHolders))
+
+    cur.execute(
+        f'''
+        UPDATE "{layer_name}"
+        SET {attributeName} = 1
+        WHERE "{holderAttribute}" IN ({placeholders})
+        ''',
+        groupHolders
+    )
+    conn.commit()
+    conn.close()
+
+    return attributeName
 
 def createDistanceMatrixGPKG(self, gpkg_path, layer_name, context, feedback, nearestPoints=0, simply=False):
     #DESCRIPTION: Create a distance matrix of the input layer features
@@ -1593,7 +1615,7 @@ def update_seedsGPKG(self, holdingId, connection=False):
     if not connection:
         conn.close()
 
-def update_changeLogGPKG(self, holder, neighbourHolder, holderCombinationForChange, neighbourCombinationForChange, connection=False):
+def update_changeLogGPKG(self, holder, targetHolder, holderCombinationForChange, targetCombinationForChange, connection=False):
     gpkg_path, layer_name = self.layer
     if not connection:
         conn = sqlite3.connect(gpkg_path)
@@ -1601,21 +1623,40 @@ def update_changeLogGPKG(self, holder, neighbourHolder, holderCombinationForChan
         conn = connection
     cur = conn.cursor()
 
-    cur.execute(f"""
-        INSERT INTO "{self.changeLog}" (
-            "Change_ID",
-            "Get_from_holder_ID",
-            "Get_from_polygon_ID",
-            "Transfer_to_holder_ID",
-            "Transfer_to_polygon_ID"
-        ) VALUES (?, ?, ?, ?, ?)
-    """, (
-        self.counter,
-        holder,
-        ",".join(map(str, holderCombinationForChange)),
-        neighbourHolder,
-        ",".join(map(str, neighbourCombinationForChange))
-    ))
+    max_len = max(
+        len(holderCombinationForChange),
+        len(targetCombinationForChange)
+    )
+
+    for i in range(max_len):
+
+        get_polygon = (
+            holderCombinationForChange[i]
+            if i < len(holderCombinationForChange)
+            else None
+        )
+
+        transfer_polygon = (
+            targetCombinationForChange[i]
+            if i < len(targetCombinationForChange)
+            else None
+        )
+
+        cur.execute(f"""
+            INSERT INTO "{self.changeLog}" (
+                "Change_ID",
+                "Get_from_holder_ID",
+                "Get_from_polygon_ID",
+                "Transfer_to_holder_ID",
+                "Transfer_to_polygon_ID"
+            ) VALUES (?, ?, ?, ?, ?)
+        """, (
+            self.counter,
+            holder,
+            get_polygon,
+            targetHolder,
+            transfer_polygon)
+        )
 
     conn.commit()
     if not connection:
@@ -1740,6 +1781,66 @@ def saveInteractionOutput2GPKG(self):
     for holder in holders:
         for holderAgain in holders:
             interactionNum = self.interactionTable[holder][holderAgain]
+            if interactionNum != 0:
+                fromAttribute = holder
+                toAttribute = holderAgain
+                if fromAttribute and toAttribute:
+                    if fromAttribute in fromList:
+                        if toAttribute in toList:
+                            indices = [i for i, val in enumerate(fromList) if val == fromAttribute]
+                            for indice in indices:
+                                if toList[indice] == toAttribute:
+                                    weightList[indice] += interactionNum
+                    else:
+                        fromList.append(fromAttribute)
+                        toList.append(toAttribute)
+                        weightList.append(interactionNum)
+
+    rows = list(zip(fromList, toList, weightList))
+    rows.sort()
+
+    cur.executemany(f"""
+        INSERT INTO "{output_table}" ("from", "to", "weight")
+        VALUES (?, ?, ?)
+    """, rows)
+
+    conn.commit()
+    conn.close()
+
+    return output_table
+
+def saveInteractionOutput3GPKG(self):
+    gpkg_path, layer_name = self.layer
+    conn = sqlite3.connect(gpkg_path)
+    cur = conn.cursor()
+
+    output_table = f"{layer_name}_potential_swap_frequency"
+
+    cur.execute(f'DROP TABLE IF EXISTS "{output_table}"')
+    cur.execute("DELETE FROM gpkg_contents WHERE table_name = ?", (output_table,))
+
+    cur.execute(f"""
+            CREATE TABLE "{output_table}" (
+                "from" TEXT,
+                "to" TEXT,
+                "weight" INTEGER
+            )
+        """)
+    
+    cur.execute("""
+        INSERT INTO gpkg_contents (table_name, data_type, identifier, description)
+        VALUES (?, 'attributes', ?, 'Potential interaction log')
+    """, (output_table, output_table))
+
+    holders = list(self.holdersWithHoldings.keys())
+    holders.sort()
+
+    fromList = []
+    toList = []
+    weightList = []
+    for holder in holders:
+        for holderAgain in holders:
+            interactionNum = self.potentialInteractionTable[holder][holderAgain]
             if interactionNum != 0:
                 fromAttribute = holder
                 toAttribute = holderAgain
@@ -2035,6 +2136,10 @@ def neighboursGPKG(self, feedback, totalAreas=None, context=None):
                                     else:
                                         candidate += 1
 
+                                if self.stats:
+                                    self.potentialInteractionTable[holder][neighbourHolder] += 1
+                                    self.potentialInteractionTable[neighbourHolder][holder] += 1  
+
                                 if totalAreaDifference is None:
                                     #feedback.pushInfo(f'Possible combination: {combination}')
                                     holderCombinationForChange = combination
@@ -2049,6 +2154,7 @@ def neighboursGPKG(self, feedback, totalAreas=None, context=None):
                                         holderNewTotalArea = newHolderTotalArea
                                         neighbourNewTotalArea = newNeighbourTotalArea
                                         totalAreaDifference = difference
+
                     if holderCombinationForChange and neighbourCombinationForChange:
                         self.counter += 1   
                         setAttributeValuesGPKG(self, holder, neighbourHolder, holderCombinationForChange, neighbourCombinationForChange, connection)
@@ -2273,6 +2379,10 @@ def closerGPKG(self, feedback, totalAreas=None, context=None):
                                 break
                             else:
                                 candidate += 1
+
+                        if self.stats:
+                            self.potentialInteractionTable[holder][targetHolder] += 1
+                            self.potentialInteractionTable[targetHolder][holder] += 1  
 
                         if measure is None:
                             numberOfCandidates += 1

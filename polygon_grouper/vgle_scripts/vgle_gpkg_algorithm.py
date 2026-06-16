@@ -93,7 +93,7 @@ class PolygonGrouperGPKG(QgsProcessingAlgorithm):
         child.setFlags(child.flags() | QgsProcessingParameterDefinition.FlagHidden)
         self.addParameter(child)
 
-        self.version = '2026-05-12-01'
+        self.version = '2026-06-15-01'
 
     def name(self):
         return 'polygon_grouper_gpkg'
@@ -216,6 +216,7 @@ class PolygonGrouperGPKG(QgsProcessingAlgorithm):
             vgle_gpkgs.calculateStatDataGPKG(self, gpkg_path, tempLayerName, indicatorTable, 'BE', self.holderAttribute)
             
             self.interactionTable = vgle_utils.createInteractionOutput(self.holdersWithHoldings)
+            self.potentialInteractionTable = vgle_utils.createInteractionOutput(self.holdersWithHoldings)
             
             mergedBELayer = vgle_gpkgs.createMergedFileGPKG(self, gpkg_path, tempLayerName, context, feedback)
             _, __ = vgle_gpkgs.calculateTotalDistancesGPKG(self, gpkg_path, mergedBELayer)
@@ -260,7 +261,8 @@ class PolygonGrouperGPKG(QgsProcessingAlgorithm):
             
             if parameters['Stats']:
                 exc_freq_table, changes = vgle_gpkgs.saveInteractionOutput1GPKG(self)
-                swap_freq_table = vgle_gpkgs.saveInteractionOutput2GPKG(self)               
+                swap_freq_table = vgle_gpkgs.saveInteractionOutput2GPKG(self)  
+                potential_swap_table = vgle_gpkgs.saveInteractionOutput3GPKG(self)             
                 vgle_gpkgs.calculateStatDataGPKG(self, gpkg_path, tempLayerName, indicatorTable, 'AE', self.actualHolderAttribute)
                 _, __ = vgle_gpkgs.calculateTotalDistancesGPKG(self, gpkg_path, mergedLayer)
                 mergedAETable = vgle_gpkgs.calculateStatDataMergedGPKG(self, gpkg_path, mergedLayer, self.actualHolderAttribute, timeStamp)
@@ -311,6 +313,14 @@ class PolygonGrouperGPKG(QgsProcessingAlgorithm):
                     context.addLayerToLoadOnCompletion(
                         uri,
                         QgsProcessingContext.LayerDetails(exc_freq_table, context.project())
+                    )
+
+                    cleaned_name = potential_swap_table.replace('"', '').replace("'", '').strip()
+                    uri = f'{gpkg_path}|layername={cleaned_name}'
+                    feedback.pushInfo(f"URI: {uri}")
+                    context.addLayerToLoadOnCompletion(
+                        uri,
+                        QgsProcessingContext.LayerDetails(potential_swap_table, context.project())
                     )
 
             mainEndTime = time.time()
