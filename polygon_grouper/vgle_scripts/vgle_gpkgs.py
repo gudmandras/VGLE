@@ -1242,6 +1242,12 @@ def setTurnAttributesGPKG(self, connection=False):
     newId = f"id_{self.turn}"
     newHolder = f"holder_{self.turn}"
 
+    if self.turn == 1:
+        originalHolder = f"holder_{self.turn-1}"
+        cur.execute(f'DROP TABLE IF EXISTS {originalHolder}')
+        cur.execute(f'ALTER TABLE "{layer_name}" ADD COLUMN {originalHolder} TEXT')
+        cur.execute(f'UPDATE "{layer_name}" SET {originalHolder} = {self.actualHolderAttribute}')
+
     cur.execute(f'DROP TABLE IF EXISTS {newId}')
     cur.execute(f'DROP TABLE IF EXISTS {newHolder}')
     

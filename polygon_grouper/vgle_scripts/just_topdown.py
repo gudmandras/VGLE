@@ -22,6 +22,7 @@ from qgis.core import (QgsProject,
                        QgsProcessingParameterEnum,
                        QgsVectorFileWriter,
                        QgsProcessingContext,
+                       QgsProcessingFeatureSourceDefinition,
                        QgsProcessingParameterField,
                        QgsProcessingParameterString,
                        QgsDataSourceUri,
@@ -102,7 +103,7 @@ class JustTopDownAlgorithm(QgsProcessingAlgorithm):
         resolution.setFlags(resolution.flags() | QgsProcessingParameterDefinition.FlagAdvanced)
         self.addParameter(resolution)
 
-        self.version = '2026-06-15-01'
+        self.version = '2026-07-27-01'
 
     def tr(self, string):
         return QCoreApplication.translate('Processing', string)
@@ -238,12 +239,21 @@ class JustTopDownAlgorithm(QgsProcessingAlgorithm):
         for key, group in groups.items():
             counter += 1
             group_table, group_rows = self.selectGroup(timeStamp, key, group)
+            group_layer = QgsVectorLayer(f'{gpkg_path}|layername={group_table}', f"group_{key}", "ogr")
+            if parameters['Preference']:
+                algParams = {
+                    'INPUT': group_layer,
+                    'PREDICATE': [3],
+                    'INTERSECT': QgsProcessingFeatureSourceDefinition(filePath, selectedFeaturesOnly=True, featureLimit=-1, geometryCheck=QgsFeatureRequest.GeometryAbortOnInvalid),
+                    'OUTPUT': 'TEMPORARY_OUTPUT'
+                }
+                processing.run("native:selectbylocation", algParams, is_child_algorithm=True)
             if topdownGroupsLayer is None:
                 topdownGroupsLayer = self.createEmptyGroup(timeStamp, key, 'topdown_groups', group)
                 topdownGroupsLayerMerged = self.createEmptyGroup(timeStamp, key, 'topdown_groups_merged', group)
             feedback.pushInfo(f'Group {key} processing started with {group_rows} features')
             tempResult = processing.run("Polygon Grouper:polygon_grouper_gpkg", {
-                    'Inputlayer': QgsVectorLayer(f'{gpkg_path}|layername={group_table}', f"group_{key}", "ogr"),
+                    'Inputlayer': group_layer,
                     'Preference': parameters['Preference'],
                     'AssignedByField': [parameters['AssignedByField']],
                     'BalancedByField': parameters['BalancedByField'],

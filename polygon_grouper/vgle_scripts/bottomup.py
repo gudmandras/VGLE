@@ -90,7 +90,7 @@ class BottomUpAlgorithm(QgsProcessingAlgorithm):
         resultOption.setFlags(resultOption.flags() | QgsProcessingParameterDefinition.FlagAdvanced)
         self.addParameter(resultOption)
 
-        self.version = '2026-06-15-01'
+        self.version = '2026-07-27-01'
 
     def tr(self, string):
         return QCoreApplication.translate('Processing', string)
@@ -262,7 +262,11 @@ class BottomUpAlgorithm(QgsProcessingAlgorithm):
                             if attr not in vgle_layers.getAttributesNames(self.parameterAsVectorLayer(parameters, 'Inputlayer', context)) and attr not in [self.idAttribute, 'seed_flag', 'geom']]
             vgle_gpkgs.deleteField(gpkg_path, mergedLayer, toDeleteAttr)
             
+            gpkg_path, layer_name = self.layer
             if parameters['Stats']:
+                if self.resultType == 0:
+                    afterHoldersWithHoldings, _ = vgle_gpkgs.getHoldersHoldingsGPKG(gpkg_path, layer_name, self.actualHolderAttribute, self.idAttribute)
+                    self.holdersWithHoldings = afterHoldersWithHoldings
                 exc_freq_table, changes = vgle_gpkgs.saveInteractionOutput1GPKG(self)
                 swap_freq_table = vgle_gpkgs.saveInteractionOutput2GPKG(self) 
                 potential_swap_table = vgle_gpkgs.saveInteractionOutput3GPKG(self)               
@@ -283,7 +287,6 @@ class BottomUpAlgorithm(QgsProcessingAlgorithm):
             vgle_gpkgs.deleteIndexes(self.layer[0], self.layer[1])
             vgle_gpkgs.deleteIndexes(self.layer[0], mergedLayer)
 
-            gpkg_path, layer_name = self.layer
             cleaned_name = layer_name.replace('"', '').replace("'", '').strip()
             uri = f'{gpkg_path}|layername={cleaned_name}'
             feedback.pushInfo(f"URI: {uri}")
