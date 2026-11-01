@@ -1242,12 +1242,6 @@ def setTurnAttributesGPKG(self, connection=False):
     newId = f"id_{self.turn}"
     newHolder = f"holder_{self.turn}"
 
-    if self.turn == 1:
-        originalHolder = f"holder_{self.turn-1}"
-        cur.execute(f'DROP TABLE IF EXISTS {originalHolder}')
-        cur.execute(f'ALTER TABLE "{layer_name}" ADD COLUMN {originalHolder} TEXT')
-        cur.execute(f'UPDATE "{layer_name}" SET {originalHolder} = {self.actualHolderAttribute}')
-
     cur.execute(f'DROP TABLE IF EXISTS {newId}')
     cur.execute(f'DROP TABLE IF EXISTS {newHolder}')
     
@@ -1784,8 +1778,11 @@ def saveInteractionOutput2GPKG(self):
     fromList = []
     toList = []
     weightList = []
+    pairs = set()
     for holder in holders:
         for holderAgain in holders:
+            if (holder, holderAgain) in pairs or (holderAgain, holder) in pairs:
+                continue
             interactionNum = self.interactionTable[holder][holderAgain]
             if interactionNum != 0:
                 fromAttribute = holder
@@ -1797,13 +1794,20 @@ def saveInteractionOutput2GPKG(self):
                             for indice in indices:
                                 if toList[indice] == toAttribute:
                                     weightList[indice] += interactionNum
+                    elif fromAttribute in toList:
+                         if toAttribute in fromList:
+                            indices = [i for i, val in enumerate(toList) if val == fromAttribute]
+                            for indice in indices:
+                                if fromList[indice] == toAttribute:
+                                    weightList[indice] += interactionNum
                     else:
                         fromList.append(fromAttribute)
                         toList.append(toAttribute)
                         weightList.append(interactionNum)
+                        pairs.add((fromAttribute, toAttribute))
 
     rows = list(zip(fromList, toList, weightList))
-    rows.sort()
+    rows.sort(key=lambda row: (row[1], row[0]))
 
     cur.executemany(f"""
         INSERT INTO "{output_table}" ("from", "to", "weight")
