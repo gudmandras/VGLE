@@ -6,6 +6,7 @@ import subprocess
 import pathlib as pa
 import math
 import sqlite3
+import processing
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from qgis.PyQt.QtCore import QVariant

@@ -57,7 +57,13 @@ class BottomUpAlgorithm(QgsProcessingAlgorithm):
                                                               'Closer, then neighbours'],
                                                      allowMultiple=False, defaultValue='Neighbours'))
         self.algorithmNames = ['Neighbours', 'Closer', "Neighbours, then closer", "Closer, then neighbours"]
-        
+
+        membersField = QgsProcessingParameterField('StartingMembersByField', 'Starting members by field',
+                                                      type=QgsProcessingParameterField.Any,
+                                                      parentLayerParameterName='Inputlayer',
+                                                      allowMultiple=False, defaultValue='')
+        membersField.setFlags(membersField.flags() | QgsProcessingParameterDefinition.FlagAdvanced)
+        self.addParameter(membersField)
         onlySelected = QgsProcessingParameterBoolean('OnlySelected', 'Only use the selected features',
                                                      defaultValue=False)
         onlySelected.setFlags(onlySelected.flags() | QgsProcessingParameterDefinition.FlagAdvanced)
@@ -90,7 +96,7 @@ class BottomUpAlgorithm(QgsProcessingAlgorithm):
         resultOption.setFlags(resultOption.flags() | QgsProcessingParameterDefinition.FlagAdvanced)
         self.addParameter(resultOption)
 
-        self.version = '2026-07-27-01'
+        self.version = '2026-06-14-01'
 
     def tr(self, string):
         return QCoreApplication.translate('Processing', string)
@@ -139,6 +145,7 @@ class BottomUpAlgorithm(QgsProcessingAlgorithm):
 
         # Get inputs
         self.weight = parameters['BalancedByField']
+        self.members = parameters['StartingMembersByField']
         self.tolerance = parameters['Tolerance']
         self.distance = parameters['DistanceThreshold']
         self.useSingle = parameters['Single']
@@ -161,12 +168,6 @@ class BottomUpAlgorithm(QgsProcessingAlgorithm):
         vgle_utils.startLogging(self.parameterAsVectorLayer(parameters, 'Inputlayer', context), parameters, timeStamp, self.version)
 
         selectedHoldersRowIds = vgle_gpkgs.getSelectionIdsGPKG(self.parameterAsVectorLayer(parameters, 'Inputlayer', context))
-        if len(selectedHoldersRowIds) == 0:
-            feedback.reportError('Please select features to process', fatalError=True)
-            return {}
-        elif len(selectedHoldersRowIds) > self.groupSize:
-            feedback.reportError('More selected holder than group size! Increase the group size or deselect holders', fatalError=True)
-            return {}
 
         # Create work file and get the starting dictionaries
         gpkg_path, tempLayerName = vgle_gpkgs.createTempLayerIntoGPKG(self.parameterAsVectorLayer(parameters, 'Inputlayer', context), self.algorithmNames[self.algorithmIndex].lower().replace(" ", "_").replace(",", "_"), timeStamp, feedback)
@@ -185,8 +186,16 @@ class BottomUpAlgorithm(QgsProcessingAlgorithm):
         self.holdingsWithArea = holdingsWithArea
         self.holdersTotalArea = vgle_utils.calculateTotalArea(self.holdersWithHoldings, self.holdingsWithArea)
 
+        self.selectedHoldersIds = vgle_gpkgs.getStartingMembersIdsGPKG(gpkg_path, tempLayerName, self.members, self.holderAttribute)
+        if len(self.selectedHoldersIds) == 0:
+            feedback.reportError('Please select features to process', fatalError=True)
+            return {}
+        elif len(self.selectedHoldersIds) > self.groupSize:
+            feedback.reportError('More selected holder than group size! Increase the group size or deselect holders', fatalError=True)
+            return {}
+
         self.seeds =  vgle_gpkgs.determineSeedPolygonsGPKG(self, gpkg_path, tempLayerName, selectedHoldersRowIds)
-        self.selectedHoldersIds = vgle_gpkgs.getSelectedHolders(self, gpkg_path, tempLayerName, self.parameterAsVectorLayer(parameters, 'Inputlayer', context))
+        #self.selectedHoldersIds = vgle_gpkgs.getSelectedHolders(self, gpkg_path, tempLayerName, self.parameterAsVectorLayer(parameters, 'Inputlayer', context))
         feedback.pushInfo(f'Bottom Up group members (lenght - {len(self.selectedHoldersIds)}): {self.selectedHoldersIds}')
 
         feedback.pushInfo('Calculate distance matrix')
@@ -236,6 +245,8 @@ class BottomUpAlgorithm(QgsProcessingAlgorithm):
         if not oneSeedBoolean:
             vgle_utils.endLogging()
             return {}
+        vgle_gpkgs.createFieldGPKG(gpkg_path, tempLayerName, 'beforeHolder')
+        vgle_gpkgs.copyFieldGPKG(gpkg_path, tempLayerName, self.actualHolderAttribute, 'beforeHolder')
         if self.algorithmIndex == 0:
             swapedLayer, totalAreas = vgle_gpkgs.neighboursGPKG(self, feedback, context=context)
         elif self.algorithmIndex == 1:
@@ -249,6 +260,9 @@ class BottomUpAlgorithm(QgsProcessingAlgorithm):
 
         if swapedLayer:
             feedback.setCurrentStep(self.steps-1)
+            vgle_gpkgs.createFieldGPKG(gpkg_path, tempLayerName, 'afterHolder')
+            vgle_gpkgs.copyFieldGPKG(gpkg_path, tempLayerName, self.actualHolderAttribute, 'afterHolder')
+
             if self.resultType == 1:
                 vgle_gpkgs.createGroupFlag(gpkg_path, tempLayerName, self.actualHolderAttribute, self.selectedHoldersIds)
             else:
@@ -262,11 +276,7 @@ class BottomUpAlgorithm(QgsProcessingAlgorithm):
                             if attr not in vgle_layers.getAttributesNames(self.parameterAsVectorLayer(parameters, 'Inputlayer', context)) and attr not in [self.idAttribute, 'seed_flag', 'geom']]
             vgle_gpkgs.deleteField(gpkg_path, mergedLayer, toDeleteAttr)
             
-            gpkg_path, layer_name = self.layer
             if parameters['Stats']:
-                if self.resultType == 0:
-                    afterHoldersWithHoldings, _ = vgle_gpkgs.getHoldersHoldingsGPKG(gpkg_path, layer_name, self.actualHolderAttribute, self.idAttribute)
-                    self.holdersWithHoldings = afterHoldersWithHoldings
                 exc_freq_table, changes = vgle_gpkgs.saveInteractionOutput1GPKG(self)
                 swap_freq_table = vgle_gpkgs.saveInteractionOutput2GPKG(self) 
                 potential_swap_table = vgle_gpkgs.saveInteractionOutput3GPKG(self)               
@@ -287,6 +297,7 @@ class BottomUpAlgorithm(QgsProcessingAlgorithm):
             vgle_gpkgs.deleteIndexes(self.layer[0], self.layer[1])
             vgle_gpkgs.deleteIndexes(self.layer[0], mergedLayer)
 
+            gpkg_path, layer_name = self.layer
             cleaned_name = layer_name.replace('"', '').replace("'", '').strip()
             uri = f'{gpkg_path}|layername={cleaned_name}'
             feedback.pushInfo(f"URI: {uri}")

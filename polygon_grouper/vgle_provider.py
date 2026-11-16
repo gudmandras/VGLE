@@ -33,10 +33,10 @@ class PolygonGrouperProvider(QgsProcessingProvider):
         """
         Loads all algorithms belonging to this provider.
         """
-        self.addAlgorithm(PolygonGrouper())
+        #self.addAlgorithm(PolygonGrouper())
         self.addAlgorithm(PolygonGrouperGPKG())
         self.addAlgorithm(BottomUpAlgorithm())
-        self.addAlgorithm(TopDownAlgorithm())
+        #self.addAlgorithm(TopDownAlgorithm())
         self.addAlgorithm(JustTopDownAlgorithm())
         self.addAlgorithm(StatAlgorithm())
 

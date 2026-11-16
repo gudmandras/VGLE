@@ -22,7 +22,6 @@ from qgis.core import (QgsProject,
                        QgsProcessingParameterEnum,
                        QgsVectorFileWriter,
                        QgsProcessingContext,
-                       QgsProcessingFeatureSourceDefinition,
                        QgsProcessingParameterField,
                        QgsProcessingParameterString,
                        QgsDataSourceUri,
@@ -103,7 +102,7 @@ class JustTopDownAlgorithm(QgsProcessingAlgorithm):
         resolution.setFlags(resolution.flags() | QgsProcessingParameterDefinition.FlagAdvanced)
         self.addParameter(resolution)
 
-        self.version = '2026-07-27-01'
+        self.version = '2026-06-14-01'
 
     def tr(self, string):
         return QCoreApplication.translate('Processing', string)
@@ -170,6 +169,7 @@ class JustTopDownAlgorithm(QgsProcessingAlgorithm):
         mainStartTime = time.time()
 
         self.holderAttribute = self.parameterAsString(parameters, 'AssignedByField', context)
+        self.preference = self.parameterAsBool(parameters, 'Preference', context)
 
         filePath = self.parameterAsVectorLayer(parameters, 'Inputlayer', context).source()
         directory = os.path.dirname(filePath)
@@ -189,6 +189,10 @@ class JustTopDownAlgorithm(QgsProcessingAlgorithm):
             self.layer = (gpkg_path, source_layer_name)
        
         vgle_utils.startLogging(self.parameterAsVectorLayer(parameters, 'Inputlayer', context), parameters, timeStamp, self.version)
+
+        if self.preference:
+            selectedHoldersRowIds = vgle_gpkgs.getSelectionIdsGPKG(self.parameterAsVectorLayer(parameters, 'Inputlayer', context))
+            preferenceAttribute = vgle_gpkgs.createPreferenceFlag(gpkg_path, source_layer_name, selectedHoldersRowIds)
 
         csv_path = os.path.join(directory, f'{self.SwapFreqLayer}_groups.csv')
         csv_sanitized = csv_path.replace('\\', '/')
@@ -236,24 +240,25 @@ class JustTopDownAlgorithm(QgsProcessingAlgorithm):
         group_paths = {}
         counter = 1
         self.colList = [self.parameterAsString(parameters, 'AssignedByField', context), self.parameterAsString(parameters, 'BalancedByField', context)]
+        if self.preference:
+            self.colList.append(preferenceAttribute)
+
         for key, group in groups.items():
             counter += 1
             group_table, group_rows = self.selectGroup(timeStamp, key, group)
-            group_layer = QgsVectorLayer(f'{gpkg_path}|layername={group_table}', f"group_{key}", "ogr")
-            if parameters['Preference']:
-                algParams = {
-                    'INPUT': group_layer,
-                    'PREDICATE': [3],
-                    'INTERSECT': QgsProcessingFeatureSourceDefinition(filePath, selectedFeaturesOnly=True, featureLimit=-1, geometryCheck=QgsFeatureRequest.GeometryAbortOnInvalid),
-                    'OUTPUT': 'TEMPORARY_OUTPUT'
-                }
-                processing.run("native:selectbylocation", algParams, is_child_algorithm=True)
+
             if topdownGroupsLayer is None:
                 topdownGroupsLayer = self.createEmptyGroup(timeStamp, key, 'topdown_groups', group)
                 topdownGroupsLayerMerged = self.createEmptyGroup(timeStamp, key, 'topdown_groups_merged', group)
+
+            if self.preference:
+                workLayer = self.inheritSelection(gpkg_path, group_table, key, preferenceAttribute)
+            else:
+                workLayer = QgsVectorLayer(f'{gpkg_path}|layername={group_table}', f"group_{key}", "ogr")
+
             feedback.pushInfo(f'Group {key} processing started with {group_rows} features')
             tempResult = processing.run("Polygon Grouper:polygon_grouper_gpkg", {
-                    'Inputlayer': group_layer,
+                    'Inputlayer': workLayer,
                     'Preference': parameters['Preference'],
                     'AssignedByField': [parameters['AssignedByField']],
                     'BalancedByField': parameters['BalancedByField'],
@@ -322,14 +327,22 @@ class JustTopDownAlgorithm(QgsProcessingAlgorithm):
 
             geom_col = cur.fetchone()[0]
 
-            cur.execute(f'CREATE TABLE "{target_table}" AS SELECT {self.colList[0]}, {self.colList[1]}, {geom_col} FROM "{source_table}" WHERE 1=0;')
-
-            query = f"""
+            if self.preference:
+                cur.execute(f'CREATE TABLE "{target_table}" AS SELECT {self.colList[0]}, {self.colList[1]}, {self.colList[2]}, {geom_col} FROM "{source_table}" WHERE 1=0;')
+                query = f"""
+                INSERT INTO "{target_table}" ({self.colList[0]}, {self.colList[1]}, {self.colList[2]}, {geom_col}) 
+                SELECT {self.colList[0]}, {self.colList[1]}, {self.colList[2]}, {geom_col} FROM "{source_table}" 
+                WHERE "{self.holderAttribute}" IN ({placeholders})
+                """
+                cur.execute(query, fids)
+            else:
+                cur.execute(f'CREATE TABLE "{target_table}" AS SELECT {self.colList[0]}, {self.colList[1]}, {geom_col} FROM "{source_table}" WHERE 1=0;')
+                query = f"""
                 INSERT INTO "{target_table}" ({self.colList[0]}, {self.colList[1]}, {geom_col}) 
                 SELECT {self.colList[0]}, {self.colList[1]}, {geom_col} FROM "{source_table}" 
                 WHERE "{self.holderAttribute}" IN ({placeholders})
-            """
-            cur.execute(query, fids)
+                """
+                cur.execute(query, fids)
 
             cur.execute(f'ALTER TABLE "{target_table}" ADD COLUMN topdown_group REAL;')
 
@@ -371,8 +384,8 @@ class JustTopDownAlgorithm(QgsProcessingAlgorithm):
         conn = sqlite3.connect(gpkg_path)
         cur = conn.cursor()
 
-        id_list_str = ",".join(map(str, fids))
-        placeholders = ",".join(["?"] * len(fids))
+        #id_list_str = ",".join(map(str, fids))
+        #placeholders = ",".join(["?"] * len(fids))
 
         target_table = f"{source_table}_{timeStamp}_group_{postfix}"
         
@@ -385,12 +398,12 @@ class JustTopDownAlgorithm(QgsProcessingAlgorithm):
 
             cur.execute(f'CREATE TABLE "{target_table}" AS SELECT {self.colList[0]}, {self.colList[1]}, {geom_col} FROM "{source_table}" WHERE 1=0;')
 
-            query = f"""
-                INSERT INTO "{target_table}" ({self.colList[0]}, {self.colList[1]}, {geom_col}) 
-                SELECT {self.colList[0]}, {self.colList[1]}, {geom_col} FROM "{source_table}" 
-                WHERE "{self.holderAttribute}" IN ({placeholders})
-            """
-            cur.execute(query, fids)
+            #query = f"""
+            #    INSERT INTO "{target_table}" ({self.colList[0]}, {self.colList[1]}, {geom_col}) 
+            #    SELECT {self.colList[0]}, {self.colList[1]}, {geom_col} FROM "{source_table}" 
+            #    WHERE "{self.holderAttribute}" IN ({placeholders})
+            #"""
+            #cur.execute(query, fids)
 
             cur.execute(f'ALTER TABLE "{target_table}" ADD COLUMN topdown_group REAL;')
 
@@ -500,6 +513,16 @@ class JustTopDownAlgorithm(QgsProcessingAlgorithm):
             QgsProcessingContext.LayerDetails(vlayer.name(), context.project(), keyword)
             )
 
+    def inheritSelection(self, gpkg_path, group_table, key, preferenceAttribute):
+        layer = QgsVectorLayer(f'{gpkg_path}|layername={group_table}', f"group_{key}", "ogr")
+        request = QgsFeatureRequest().setFilterExpression(f'"{preferenceAttribute}" = 1')
+        ids = [feature.id() for feature in layer.getFeatures(request)]
+
+        layer.selectByIds(ids)
+
+        return layer
+
+
     #def postProcessAlgorithm(self, context, feedback):
     #    delete_shapefiles(self.locked_files)
     #    return {}
@@ -514,14 +537,14 @@ def is_r_provider_installed():
         return enable_r_plugin()
 
 def enable_r_plugin(reload=False):
-    if reload:
-        try:
-            qgis.utils.unloadPlugin("processing_r")
-            qgis.utils.loadPlugin("processing_r")
-            qgis.utils.startPlugin("processing_r")
-            return True
-        except Exception as e:  
-            return False
+    #if reload:
+    #    try:
+    #        qgis.utils.unloadPlugin("processing_r")
+    #        qgis.utils.loadPlugin("processing_r")
+    #        qgis.utils.startPlugin("processing_r")
+    #        return True
+    #    except Exception as e:  
+    #        return False
 
     try:
         if "processing_r" not in qgis.utils.plugins:
@@ -560,8 +583,8 @@ def copyR_script(r_script_path):
             else:
                 os.remove(dest_path)
                 shutil.copy(r_script_path, dest_path)
-            if not enable_r_plugin(reload=True):
-                raise Exception("Failed to enable R plugin after copying RSX script.")
+            #if not enable_r_plugin(reload=True):
+            #    raise Exception("Failed to enable R plugin after copying RSX script.")
         except Exception as e:
             return False
     else:
@@ -573,8 +596,8 @@ def copyR_script(r_script_path):
             else:
                 os.remove(rsx_cache_path)
                 shutil.copy(r_script_path, rsx_cache_path)
-            if not enable_r_plugin(reload=True):
-                raise Exception("Failed to enable R plugin after copying RSX script.")
+            #if not enable_r_plugin(reload=True):
+            #    raise Exception("Failed to enable R plugin after copying RSX script.")
         except Exception as e:
             return False   
     return True
@@ -598,7 +621,7 @@ def extendLayerWithGroup(self, layer, group_layer_path, context):
             if col_name.lower() != 'fid' and col_name not in source_columns:
                 cur.execute(f'ALTER TABLE "{layer}" ADD COLUMN "{col_name}" {col_type}')
 
-        cur.execute(f'PRAGMA table_info("{layer}")')
+        cur.execute(f'PRAGMA table_info("{group_layer_name}")')
         final_target_cols = [f'"{col[1]}"' for col in cur.fetchall() if col[1].lower() != 'fid']
         
         col_string = ", ".join(final_target_cols)

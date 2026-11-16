@@ -252,6 +252,20 @@ def createIdFieldGPKG(gpkg_path, layer_name):
 
     return new_field
 
+def createFieldGPKG(gpkg_path, layer_name, col_name):
+    conn = sqlite3.connect(gpkg_path)
+    cur = conn.cursor()
+
+    cur.execute(f"PRAGMA table_info('{layer_name}')")
+    columns = [col[1] for col in cur.fetchall()]
+
+    if col_name not in columns:
+        cur.execute(f'ALTER TABLE "{layer_name}" ADD COLUMN "{col_name}" TEXT')
+
+    conn.commit()
+    conn.close()
+
+
 def copyFieldGPKG(gpkg_path, layer_name, source_field, target_field): 
     conn = sqlite3.connect(gpkg_path)
     cur = conn.cursor()
@@ -272,6 +286,7 @@ def copyFieldGPKG(gpkg_path, layer_name, source_field, target_field):
             pass
     conn.commit()
     conn.close()
+
 
 
 def saveDistanceMatrix(gpkg_path, layer_name, matrix):
@@ -758,7 +773,6 @@ def getFieldNamesGPKG(gpkg_path, layer_name):
     conn.close()
     return columns
 
-
 def getSelectedHolders(self, gpkg_path, layer_name, old_layer):
     conn = sqlite3.connect(gpkg_path)
     cur = conn.cursor()
@@ -802,20 +816,19 @@ def determineSeedPolygonsGPKG(self, gpkg_path, layer_name, selectedFeatures=None
 
     if selectedFeatures:
         placeholders = ','.join(['?'] * len(selectedFeatures))
-        sql = f"""
-            UPDATE "{layer_name}"
-            SET seed_flag = 1
-            WHERE "{self.idAttribute}" IN ({placeholders})
-        """
-        cur.execute(sql, selectedFeatures)
+        sql = f"""UPDATE "{layer_name}" SET seed_flag = 1 WHERE rowid IN ({placeholders})"""
+        cur.execute(sql, (selectedFeatures))
         conn.commit()
 
         cur.execute(f"""
             SELECT DISTINCT "{self.holderAttribute}"
             FROM "{layer_name}"
-            WHERE "{self.idAttribute}" IN ({placeholders})
+            WHERE rowid IN ({placeholders})
         """, selectedFeatures)
         selectedHolders = [row[0] for row in cur.fetchall()]
+    else: 
+        selectedHolders = []
+    holder_placeholders = ','.join(['?'] * len(selectedHolders))
 
     cur.execute(f"""
         WITH ranked AS (
@@ -825,14 +838,14 @@ def determineSeedPolygonsGPKG(self, gpkg_path, layer_name, selectedFeatures=None
                        ORDER BY "{self.weight}" DESC
                    ) AS rn
             FROM "{layer_name}"
-            WHERE seed_flag IS NULL OR seed_flag = 0
+            WHERE (seed_flag IS NULL OR seed_flag = 0) and "{self.holderAttribute}" NOT IN ({holder_placeholders})
         )
         UPDATE "{layer_name}"
         SET seed_flag = 1
         WHERE "{self.idAttribute}" IN (
             SELECT "{self.idAttribute}" FROM ranked WHERE rn = 1
         )
-    """)
+    """, selectedHolders)
     conn.commit()
 
     if self.useSingle:
@@ -884,6 +897,37 @@ def createGroupFlag(gpkg_path, layer_name, holderAttribute, groupHolders, attrib
         ''',
         groupHolders
     )
+    conn.commit()
+    conn.close()
+
+    return attributeName
+
+def createPreferenceFlag(gpkg_path, layer_name,  ids, attributeName='preference'):
+    conn = sqlite3.connect(gpkg_path)
+    cur = conn.cursor()
+
+    cur.execute(f"PRAGMA table_info('{layer_name}')")
+    columns = [row[1] for row in cur.fetchall()]
+    if attributeName not in columns:
+        cur.execute(f'ALTER TABLE "{layer_name}" ADD COLUMN {attributeName} INTEGER DEFAULT 0')
+    else:
+        i = 0
+        while attributeName in columns:
+            attributeName = attributeName + f'_{i}'
+            i += 1
+        cur.execute(f'ALTER TABLE "{layer_name}" ADD COLUMN {attributeName} INTEGER DEFAULT 0')
+
+    placeholders = ','.join(['?'] * len(ids))
+
+    cur.execute(
+        f'''
+        UPDATE "{layer_name}"
+        SET "{attributeName}" = 1
+        WHERE "fid" IN ({placeholders})
+        ''',
+        ids
+    )
+
     conn.commit()
     conn.close()
 
@@ -1191,6 +1235,15 @@ def getSelectionIdsGPKG(layer):
         ids.append(feature.id())
     
     return ids
+
+def getStartingMembersIdsGPKG(gpkg_path, layer, flagField, holderField):
+    conn = sqlite3.connect(gpkg_path)
+    cur = conn.cursor()
+
+    cur.execute(f"""SELECT "{holderField}" FROM "{layer}" WHERE "{flagField}" IS NOT NULL AND "{flagField}" <> 0;""")
+    selectedHolders = [str(row[0]) for row in cur.fetchall()]
+
+    return selectedHolders
 
 def checkSeedNumberGPKG(self, feedback):
     gpkg_path, layer_name = self.layer

@@ -148,5 +148,5 @@ class vgle(object):
             self.first_start = False
         #import ptvsd
         #ptvsd.debug_this_thread()
-        processing.execAlgorithmDialog("Polygon Grouper:polygon_grouper")
+        processing.execAlgorithmDialog("Polygon Grouper:polygon_grouper_gpkg")
 

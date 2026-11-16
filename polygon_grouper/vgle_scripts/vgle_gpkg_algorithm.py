@@ -238,6 +238,8 @@ class PolygonGrouperGPKG(QgsProcessingAlgorithm):
         if not oneSeedBoolean:
             vgle_utils.endLogging()
             return {}
+        vgle_gpkgs.createFieldGPKG(gpkg_path, tempLayerName, 'beforeHolder')
+        vgle_gpkgs.copyFieldGPKG(gpkg_path, tempLayerName, self.actualHolderAttribute, 'beforeHolder')
         if self.algorithmIndex == 0:
             swapedLayer, totalAreas = vgle_gpkgs.neighboursGPKG(self, feedback, context=context)
         elif self.algorithmIndex == 1:
@@ -251,6 +253,9 @@ class PolygonGrouperGPKG(QgsProcessingAlgorithm):
 
         if swapedLayer:
             feedback.setCurrentStep(self.steps-1)
+            vgle_gpkgs.createFieldGPKG(gpkg_path, tempLayerName, 'afterHolder')
+            vgle_gpkgs.copyFieldGPKG(gpkg_path, tempLayerName, self.actualHolderAttribute, 'afterHolder')
+
             mergedLayer = vgle_gpkgs.createMergedFileGPKG(self, gpkg_path, tempLayerName, context, feedback)
             #wait(5000)
             vgle_gpkgs.copyFieldGPKG(gpkg_path, mergedLayer, self.actualHolderAttribute, parameters["AssignedByField"][0])
