@@ -1044,7 +1044,7 @@ def multi_distance_matrix(self, layer, outputDirectory):
 
     return distanceMatrix
 
-def createFragmentationStat(self, data, mergedBeforeData):
+def createFragmentationStat(self, be_data, ae_data):
     """
     DESCRIPTION: Create statistics about the plugin run. Three statistics generate
     INPUTS:
@@ -1062,31 +1062,36 @@ def createFragmentationStat(self, data, mergedBeforeData):
         indicators_data.addAttributes([QgsField('Holder ID', QVariant.String, len=self.holderAttributeLenght)])
     else:
         indicators_data.addAttributes([QgsField('Holder ID', QVariant.Int)])
-    indicators_data.addAttributes([QgsField('# of parcels (HFI)', QVariant.Int)])
-    indicators_data.addAttributes([QgsField('Total Area (PFI)', QVariant.Double, "float", 10, 3)])
-    indicators_data.addAttributes([QgsField('Distance (m) (HDI)', QVariant.Double, "float", 10, 3)])
+    indicators_data.addAttributes([QgsField('BE # of parcels', QVariant.Int)])
+    indicators_data.addAttributes([QgsField('BE area (ha)', QVariant.Double, "float", 10, 3)])
+    indicators_data.addAttributes([QgsField('BE distance (m)', QVariant.Double, "float", 10, 3)])
+    indicators_data.addAttributes([QgsField('AE # of parcels', QVariant.Int)])
+    indicators_data.addAttributes([QgsField('AE area (ha)', QVariant.Double, "float", 10, 3)])
+    indicators_data.addAttributes([QgsField('AE distance (m)', QVariant.Double, "float", 10, 3)])
     indicators_data.addAttributes([QgsField('HFI', QVariant.Double, "float", 10, 3)])
     indicators_data.addAttributes([QgsField('PFI', QVariant.Double, "float", 10, 3)])
     indicators_data.addAttributes([QgsField('HDI', QVariant.Double, "float", 10, 3)])
     indicators.updateFields()
-
     fields = indicators.fields()
+
     feats = []
     holders = list(self.holdersWithHoldings.keys())
     for turn, holder in enumerate(holders):
         feature = QgsFeature()
-        # inform the feature of its fields
+        # inform the feature of its fields 
         feature.setFields(fields)
-        feature['Number'] = turn
         feature['Holder ID'] = holder
-        feature['# of parcels (HFI)'] = data[holder]['ParcelNumber']
-        feature['Total Area (PFI)'] = data[holder]['TotalArea']
-        feature['Distance (m) (HDI)'] = data[holder]['AverageDistance']
-        feature['HFI'] = (1 - (mergedBeforeData[holder]['ParcelNumber'] / data[holder]['ParcelNumber'])) * 100
-        feature['PFI'] = round(data[holder]['TotalArea']/data[holder]['ParcelNumber'], 3)
+        feature['BE # of parcels'] = be_data[holder]['ParcelNumber']
+        feature['BE area (ha)'] = be_data[holder]['TotalArea']
+        feature['BE distance (m)'] = be_data[holder]['AverageDistance']
+        feature['AE # of parcels'] = ae_data[holder]['ParcelNumber']
+        feature['AE area (ha)'] = ae_data[holder]['TotalArea']
+        feature['AE distance (m)'] = ae_data[holder]['AverageDistance']
+        feature['HFI'] = (1 - (ae_data[holder]['ParcelNumber'] / be_data[holder]['ParcelNumber'])) * 100
+        feature['PFI'] = round((ae_data[holder]['TotalArea']/be_data[holder]['ParcelNumber'] - 1)*100, 3)
         try:
-            feature['HDI'] = (1 - (mergedBeforeData[holder]['AverageDistance'] /
-                                       data[holder]['AverageDistance'])) * 100
+            feature['HDI'] = (1 - (ae_data[holder]['AverageDistance'] /
+                                       be_data[holder]['AverageDistance'])) * 100
         except ZeroDivisionError:
             feature['HDI'] = 0
         feats.append(feature)

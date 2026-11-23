@@ -250,6 +250,8 @@ class JustTopDownAlgorithm(QgsProcessingAlgorithm):
             if topdownGroupsLayer is None:
                 topdownGroupsLayer = self.createEmptyGroup(timeStamp, key, 'topdown_groups', group)
                 topdownGroupsLayerMerged = self.createEmptyGroup(timeStamp, key, 'topdown_groups_merged', group)
+                topdownChangeLog = self.createEmptyChangeLog(timeStamp, 'topdown_groups_change_log')
+
 
             if self.preference:
                 workLayer = self.inheritSelection(gpkg_path, group_table, key, preferenceAttribute)
@@ -276,19 +278,21 @@ class JustTopDownAlgorithm(QgsProcessingAlgorithm):
                 }, context=context, feedback=feedback, is_child_algorithm=True)
             feedback.setCurrentStep(counter)
             feedback.pushInfo(f'Group {key} processing finished!')
-            group_paths[key] = (tempResult['OUTPUT'], tempResult['MERGED'])
+            group_paths[key] = (tempResult['OUTPUT'], tempResult['MERGED'], tempResult['CLOG'])
             extendLayerWithGroup(self, topdownGroupsLayer, tempResult['OUTPUT'], context)
             extendLayerWithGroup(self, topdownGroupsLayerMerged, tempResult['MERGED'], context)
+            extendLogWithGroup(self, topdownChangeLog, tempResult['CLOG'], key, context)
             vgle_gpkgs.deleteTable(gpkg_path, group_table)
 
 
-        for swapped_uri, merged_uri in group_paths.values():
+        for swapped_uri, merged_uri, clog_uri in group_paths.values():
             gpkg, swapped = swapped_uri.split("|layername=")
             vgle_gpkgs.deleteTable(gpkg, swapped)
             gpkg, merged = merged_uri.split("|layername=")
             vgle_gpkgs.deleteTable(gpkg, merged)
+            gpkg, clog = clog_uri.split("|layername=")
+            vgle_gpkgs.deleteTable(gpkg, clog)
 
-        
         cleaned_name = topdownGroupsLayer.replace('"', '').replace("'", '').strip()
         uri = f'{gpkg_path}|layername={cleaned_name}'
         feedback.pushInfo(f"URI: {uri}")
@@ -307,6 +311,7 @@ class JustTopDownAlgorithm(QgsProcessingAlgorithm):
 
         results['OUTPUT'] = topdownGroupsLayer
         results['MERGED'] = topdownGroupsLayerMerged
+        results['CLOG'] = topdownChangeLog
 
         return results
 
@@ -387,7 +392,7 @@ class JustTopDownAlgorithm(QgsProcessingAlgorithm):
         #id_list_str = ",".join(map(str, fids))
         #placeholders = ",".join(["?"] * len(fids))
 
-        target_table = f"{source_table}_{timeStamp}_group_{postfix}"
+        target_table = f"{source_table}_{timeStamp}_{postfix}"
         
         try:
             cur.execute("BEGIN TRANSACTION;")
@@ -435,6 +440,36 @@ class JustTopDownAlgorithm(QgsProcessingAlgorithm):
             return False, False
         finally:
             conn.close()
+
+    def createEmptyChangeLog(self, timeStamp, postfix):
+        gpkg_path, source_table = self.layer
+        conn = sqlite3.connect(gpkg_path)
+        cur = conn.cursor()
+
+        target_table = f"{source_table}_{timeStamp}_{postfix}"
+
+        cur.execute(f'DROP TABLE IF EXISTS "{target_table}"')
+        cur.execute("DELETE FROM gpkg_contents WHERE table_name = ?", (target_table,))
+
+        cur.execute(f"""
+                CREATE TABLE "{target_table}" (
+                    "Topdown_group" REAL,
+                    "Change_ID" INTEGER,
+                    "Polygon_ID" TEXT,
+                    "Before_holder" TEXT,
+                    "After_holder" TEXT)
+            """)
+        
+        cur.execute("""
+            INSERT INTO gpkg_contents (table_name, data_type, identifier, description)
+            VALUES (?, 'attributes', ?, 'Change log')
+        """, (target_table, target_table))
+        
+
+        conn.commit()
+        conn.close()
+
+        return target_table
 
     def selectGroupAllCols(self, timeStamp, postfix, fids):
         gpkg_path, source_table = self.layer
@@ -631,6 +666,37 @@ def extendLayerWithGroup(self, layer, group_layer_path, context):
             SELECT {col_string} FROM "{group_layer_name}"
         """)
 
+        conn.commit()
+        conn.close()
+        return True
+
+    except Exception as e:
+        conn.rollback()
+        print(f"Error updating groupLayer: {e}")
+        return False
+    finally:
+        conn.close()
+
+def extendLogWithGroup(self, layer, group_layer_path, key, context):
+    gpkg_path, source_table = self.layer
+    conn = sqlite3.connect(gpkg_path)
+    cur = conn.cursor()
+
+    group_layer_name = group_layer_path.split("|layername=")[1]
+        
+    try:       
+        col_string = "Change_ID, Polygon_ID, Before_holder, After_holder"
+
+        cur.execute(f"""
+            INSERT INTO "{layer}" ({col_string}) 
+            SELECT {col_string} FROM "{group_layer_name}"
+        """)
+        conn.commit()
+
+        cur.execute(
+            f'UPDATE "{layer}" SET topdown_group = ? WHERE topdown_group IS NULL;',
+            (key,)
+        )
         conn.commit()
         conn.close()
         return True

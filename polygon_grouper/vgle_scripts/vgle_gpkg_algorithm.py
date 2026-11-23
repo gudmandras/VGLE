@@ -258,8 +258,7 @@ class PolygonGrouperGPKG(QgsProcessingAlgorithm):
 
             mergedLayer = vgle_gpkgs.createMergedFileGPKG(self, gpkg_path, tempLayerName, context, feedback)
             #wait(5000)
-            vgle_gpkgs.copyFieldGPKG(gpkg_path, mergedLayer, self.actualHolderAttribute, parameters["AssignedByField"][0])
-            vgle_gpkgs.copyFieldGPKG(gpkg_path, mergedLayer, self.actualHolderAttribute, parameters["AssignedByField"][0])
+            #vgle_gpkgs.copyFieldGPKG(gpkg_path, mergedLayer, self.actualHolderAttribute, parameters["AssignedByField"][0])
             toDeleteAttr = [attr for attr in vgle_gpkgs.getFieldNamesGPKG(gpkg_path, mergedLayer)
                             if attr not in vgle_layers.getAttributesNames(self.parameterAsVectorLayer(parameters, 'Inputlayer', context)) and attr not in [self.idAttribute, 'seed_flag', 'geom']]
             vgle_gpkgs.deleteField(gpkg_path, mergedLayer, toDeleteAttr)
@@ -354,5 +353,6 @@ class PolygonGrouperGPKG(QgsProcessingAlgorithm):
                 feedback.reportError('Something went wrong, no change was made! See log for more details.')
             vgle_utils.endLogging()
             results['OUTPUT'] = swappedLayer
+            results['CLOG'] =  f'{gpkg_path}|layername={self.changeLog}'
             results['MERGED'] = mergedLayer
             return results 

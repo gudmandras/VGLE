@@ -166,6 +166,7 @@ def setHolderFieldGPKG(gpkg_path, layer_name, attributes, holder_field='holder_i
     if len(attributes) > 1:
         conn = sqlite3.connect(gpkg_path)
         cur = conn.cursor()
+        cur.execute(f"PRAGMA table_info('{layer_name}')")
         columns = [row[1] for row in cur.fetchall()]
         
         original_holder_field = holder_field
@@ -390,6 +391,54 @@ def createStatTableGPKG(self, gpkg_path, layer_name):
             "Change num" INTEGER
         )
     """)
+
+    cur.execute(f"""
+        INSERT INTO gpkg_contents (
+            table_name, data_type, identifier, description
+        )
+        VALUES (?, 'attributes', ?, 'Indicator table')
+    """, (target_layer_name, target_layer_name))
+
+    cur.execute(f'''
+        INSERT INTO "{target_layer_name}" ("Holder ID")
+        SELECT DISTINCT "{self.holderAttribute}"
+        FROM "{layer_name}"
+        WHERE "{self.holderAttribute}" IS NOT NULL
+    ''')
+
+    conn.commit()
+    conn.close()
+
+    return target_layer_name
+
+def createStatTableForIndicesGPKG(self, gpkg_path, layer_name):
+    target_layer_name = f'{layer_name}_fragmentation_indicators'
+    conn = sqlite3.connect(gpkg_path)
+    cur = conn.cursor()
+    cur.execute(f'DROP TABLE IF EXISTS "{target_layer_name}"')
+    cur.execute(f"""
+        CREATE TABLE "{target_layer_name}" (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            "Holder ID" TEXT,
+            "BE # of polygons" INTEGER,
+            "BE Sum area value" REAL,
+            "BE Distance (m)" REAL,
+            "AE # of polygons" INTEGER,
+            "AE Sum area value" REAL,
+            "AE Distance (m)" REAL,
+            "CH # of polygons" REAL,
+            "CH Sum area value" REAL,
+            "CH Distance (m)" REAL,
+            "HFI" REAL,
+            "PFI" REAL,
+            "HDI" REAL
+        )
+    """)
+
+    cur.execute("""
+        DELETE FROM gpkg_contents
+        WHERE table_name = ? OR identifier = ?
+    """, (target_layer_name, target_layer_name))
 
     cur.execute(f"""
         INSERT INTO gpkg_contents (
@@ -1228,6 +1277,106 @@ def calculateIndexDifferencesGPKG(self, gpkg_path, temp_layer, stat_layer_name, 
     conn.commit()
     conn.close()
 
+def calculateStatDataForIndicesFileGPKG(self, gpkg_path, layer_name, fieldName):
+    """
+    DESCRIPTION: Calculate statistics infos about a layer and fields
+    INPUTS:
+            layer: QgsVectorLayer
+            fieldName: name of the field
+    OUTPUTS: Dictionary - Holder - # of holdings - Area - Average distance
+    """
+    conn = sqlite3.connect(gpkg_path)
+    cur = conn.cursor()
+
+    cur.execute(f"""
+        SELECT
+            {fieldName} AS holder,
+            COUNT({self.idAttribute}) AS ParcelNumber,
+            SUM(COALESCE({self.weight}, 0)) AS TotalArea,
+            SUM(COALESCE({self.totalDistance}, 0))/COUNT({self.idAttribute}) AS TotalDistance
+            FROM "{layer_name}"
+            GROUP BY {fieldName}
+    """)
+
+    data = [row for row in cur.fetchall()]
+
+    conn.commit()
+    conn.close()
+    return data
+
+def calculateStatDataMergedForIndicesGPKG(self, gpkg_path, layer, fieldName):
+    conn = sqlite3.connect(gpkg_path)
+    cur = conn.cursor()
+
+    cur.execute(f"""
+        SELECT
+            {fieldName} AS "Holder ID",
+            COUNT({self.idAttribute}) AS ParcelNumber,
+            CASE
+                WHEN COUNT({self.idAttribute}) = 0 THEN 0
+                ELSE SUM(COALESCE({self.totalDistance}, 0))/COUNT({self.idAttribute})/COUNT({self.idAttribute})
+            END AS AverageDistance
+        FROM "{layer}"
+        GROUP BY "{fieldName}"
+    """)
+
+    data = [row for row in cur.fetchall()]
+
+    conn.commit()
+    conn.close()
+
+    return data
+
+def populateFragmentationIndicatorsTableGPKG(gpkg_path, stat_layer_name, be_data, ae_data):
+    conn = sqlite3.connect(gpkg_path)
+    cur = conn.cursor()
+
+    cur.executemany(f"""
+        UPDATE "{stat_layer_name}" AS s
+        SET
+            "BE # of polygons" = ?,
+            "BE Sum area value" = ?,
+            "BE Distance (m)" = ?
+        WHERE s."Holder ID" = ?
+    """, [(x[1], x[2], x[3], x[0]) for x in be_data])
+    conn.commit()
+
+    cur.executemany(f"""
+        UPDATE "{stat_layer_name}" AS s
+        SET
+            "AE # of polygons" = ?,
+            "AE Sum area value" = ?,
+            "AE Distance (m)" = ?
+        WHERE s."Holder ID" = ?
+    """, [(x[1], x[2], x[3], x[0]) for x in ae_data])
+    conn.commit()
+
+    cur.execute(f"""
+        UPDATE "{stat_layer_name}" AS s
+        SET
+            "CH # of polygons" = ROUND(ABS(s."BE # of polygons" - s."AE # of polygons"), 3),
+            "CH Sum area value" = ROUND(ABS(s."BE Sum area value" - s."AE Sum area value"), 3),
+            "CH Distance (m)" = ROUND(ABS(s."BE Distance (m)" - s."AE Distance (m)"), 3),
+            "HFI" = 
+                CASE 
+                    WHEN s."BE # of polygons" = 0 THEN 0
+                    ELSE ROUND((1.0 - (CAST(s."AE # of polygons" AS REAL) / CAST(s."BE # of polygons" AS REAL))) * 100, 3)
+                END,
+            "PFI" = 
+                CASE 
+                    WHEN s."BE Sum area value" = 0 THEN 0
+                    ELSE ROUND(((ROUND(s."AE Sum area value" / s."BE Sum area value", 3) - 1) * 100), 3)
+                END,
+            "HDI" = 
+                CASE 
+                    WHEN s."BE Distance (m)" = 0 THEN 0
+                    ELSE ROUND(((1 - (s."AE Distance (m)" / s."BE Distance (m)")) * 100), 3)
+                END
+    """ )
+    conn.commit()
+    conn.close()
+
+
 def getSelectionIdsGPKG(layer):
     selectedFeatures = layer.selectedFeatures()
     ids = []
@@ -1676,39 +1825,40 @@ def update_changeLogGPKG(self, holder, targetHolder, holderCombinationForChange,
         conn = connection
     cur = conn.cursor()
 
-    max_len = max(
-        len(holderCombinationForChange),
-        len(targetCombinationForChange)
-    )
+    for i in range(len(holderCombinationForChange)):
 
-    for i in range(max_len):
-
-        get_polygon = (
-            holderCombinationForChange[i]
-            if i < len(holderCombinationForChange)
-            else None
-        )
-
-        transfer_polygon = (
-            targetCombinationForChange[i]
-            if i < len(targetCombinationForChange)
-            else None
-        )
+        feature = holderCombinationForChange[i]
 
         cur.execute(f"""
             INSERT INTO "{self.changeLog}" (
                 "Change_ID",
-                "Get_from_holder_ID",
-                "Get_from_polygon_ID",
-                "Transfer_to_holder_ID",
-                "Transfer_to_polygon_ID"
-            ) VALUES (?, ?, ?, ?, ?)
+                "Polygon_ID",
+                "Before_holder",
+                "After_holder"
+            ) VALUES (?, ?, ?, ?)
         """, (
             self.counter,
+            feature,
             holder,
-            get_polygon,
+            targetHolder)
+        )
+
+    for i in range(len(targetCombinationForChange)):
+
+        feature = targetCombinationForChange[i]
+
+        cur.execute(f"""
+            INSERT INTO "{self.changeLog}" (
+                "Change_ID",
+                "Polygon_ID",
+                "Before_holder",
+                "After_holder"
+            ) VALUES (?, ?, ?, ?)
+        """, (
+            self.counter,
+            feature,
             targetHolder,
-            transfer_polygon)
+            holder)
         )
 
     conn.commit()
@@ -1749,10 +1899,14 @@ def saveInteractionOutput1GPKG(self):
 
     interactionTable = {}   
     for holder in holders:
+        if holder not in beforeHoldersWithHoldings.keys():
+            continue
         if holder not in interactionTable:
             interactionTable[holder] = {}
         fromHolderHoldings = beforeHoldersWithHoldings[holder]
         for holderAgain in holders:
+            if holderAgain not in afterHoldersWithHoldings.keys():
+                continue
             if holderAgain not in interactionTable:
                 interactionTable[holderAgain] = {}
             if holder != holderAgain:
@@ -1769,7 +1923,11 @@ def saveInteractionOutput1GPKG(self):
     toList = []
     weightList = []
     for holder in holders:
+        if holder not in beforeHoldersWithHoldings.keys():
+            continue
         for holderAgain in holders:
+            if holderAgain not in afterHoldersWithHoldings.keys():
+                continue
             if holder == holderAgain:
                 continue
             interactionNum = interactionTable[holder][holderAgain]
@@ -1945,11 +2103,9 @@ def createExchangeLog(self):
     cur.execute(f"""
             CREATE TABLE "{output_table}" (
                 "Change_ID" INTEGER,
-                "Get_from_holder_ID" TEXT,
-                "Get_from_polygon_ID" TEXT,
-                "Transfer_to_holder_ID" TEXT,
-                "Transfer_to_polygon_ID" TEXT
-            )
+                "Polygon_ID" TEXT,
+                "Before_holder" TEXT,
+                "After_holder" TEXT)
         """)
     
     cur.execute("""
